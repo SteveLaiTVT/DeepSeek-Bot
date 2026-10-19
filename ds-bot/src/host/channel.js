@@ -2,10 +2,13 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { questionReply } from './parts.js'
-import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
+import { BOT_INTRO_MAX, COLORS, EXTRA_COLORS, ROUTE, TIME_GAP_MINUTES } from './constants.js'
+import { ENDPOINTS, INTERFACE_VERSION, PLUGIN_VERSION, READ_ENDPOINTS } from './interface.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
+// Endpoints that carry a secret value: only from this machine or over https.
+const VALUE_ENDPOINTS = new Set(['secret-create', 'secret-set', 'secret-update'])
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 // Programming and file system errors are DS Bot's own faults, logged with their stack;
@@ -19,6 +22,21 @@ export function errorCode(error) {
 
 export function install(rt) {
   const { ctx, state } = rt
+
+  // Where a request came from: the protocol the browser reached and the Host it named.
+  // Behind a TLS proxy the forwarded protocol is the only signal; a plain http request
+  // from another machine is refused for value endpoints.
+  const originOf = (request) => {
+    let url
+    try { url = new URL(request.url) } catch { return { protocol: 'http:', host: '' } }
+    const forwarded = request.headers.get('x-forwarded-proto')
+    return {
+      protocol: forwarded === 'https' ? 'https:' : url.protocol,
+      host: request.headers.get('host') ?? url.host,
+    }
+  }
+  const localHost = /^(?:localhost|127\.0\.0\.1|\[::1\]|::1)(?::\d+)?$/i
+  const secureOrigin = origin => origin.protocol === 'https:' || localHost.test(origin.host)
 
   // The DSH interface language of the last browser that asked for the team.
   let uiLocale
@@ -60,6 +78,17 @@ export function install(rt) {
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),
     prefs: state.prefs,
+    // What a new Bot starts on, so no client computes its own: a free name and the
+    // DSH default model (or the first served one).
+    defaults: {
+      name: rt.freshBotName?.('New Bot') ?? 'New Bot',
+      model: rt.cachedDefault() ?? null,
+    },
+    // The lengths the host measures, so no client shows a limit of its own.
+    limits: { intro: BOT_INTRO_MAX },
+    // The user's read marks and reactions, shared by every device.
+    reads: state.reads ?? {},
+    reactions: state.reactions ?? {},
     // Whether a Desktop window should serve Bot browser reads (see browser.js).
     browser: rt.browserEnabled,
     // False when config.memory turns memory off: no Memory row or panel.
@@ -80,9 +109,9 @@ export function install(rt) {
     connectors: rt.connectorsView(),
     capabilityStatuses: rt.capabilityStatusesView(),
   })
-  // What a host that only reads the team may still answer.
-  // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer'])
+  // What a host that only reads the team may still answer. Updates change the dsh
+  // profile, not the team, so a reading host may run them too.
+  const READS = READ_ENDPOINTS
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -99,16 +128,49 @@ export function install(rt) {
       else if (body.motion === 'quiet' || body.motion === 'lively') state.prefs.motion = body.motion
       else throw invalid('Motion must be quiet, normal or lively')
     }
+    if (body.timeGapMinutes !== undefined) {
+      const minutes = body.timeGapMinutes
+      if (minutes === null || minutes === TIME_GAP_MINUTES) delete state.prefs.timeGapMinutes
+      else if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 60) state.prefs.timeGapMinutes = minutes
+      else throw invalid('The time gap must be 1 to 60 minutes')
+    }
     return rt.save()
   }
 
-  const handle = async (endpoint, payload, signal) => {
+  const handle = async (endpoint, payload, signal, origin = { protocol: 'http:', host: '' }) => {
     try {
       const body = payload ?? {}
       await rt.refresh()
       const readOnly = rt.readOnly()
       if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, 'bot/read-only')
+      if (VALUE_ENDPOINTS.has(endpoint) && !secureOrigin(origin)) {
+        return fail('A key can only be created or changed on this computer or over https. Open DS Bot at an https address, or set the key on the machine that runs it.', 'bot/insecure')
+      }
       switch (endpoint) {
+        case 'hello':
+          return ok({
+            interfaceVersion: INTERFACE_VERSION,
+            pluginVersion: PLUGIN_VERSION,
+            endpoints: ENDPOINTS.map(name => ({ name, read: READS.has(name) })),
+            features: {
+              memory: rt.memoryEnabled !== false,
+              browser: rt.browserEnabled === true,
+              schedules: ctx.get?.('schedule') !== undefined,
+              readOnly: readOnly ?? null,
+              dsh: {
+                credentials: ctx.get?.('credentials') !== undefined,
+                settings: ctx.get?.('settings') !== undefined,
+                deepseekAccount: ctx.get?.('deepseekAccount') !== undefined,
+                pluginManager: ctx.get?.('pluginManager') !== undefined,
+                agentDefaultModel: ctx.get?.('agentDefaultModel') !== undefined,
+                permissionPresets: ctx.get?.('permissionPresets') !== undefined,
+                agentPresets: ctx.get?.('agentPresets') !== undefined,
+                profileContext: ctx.get?.('profileContext') !== undefined,
+                launchEnvironment: ctx.get?.('launchEnvironment') !== undefined,
+                sessionProjections: ctx.get?.('sessionProjections') !== undefined,
+              },
+            },
+          })
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (readOnly === undefined) await rt.bootstrap()
@@ -182,12 +244,19 @@ export function install(rt) {
           return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
         case 'create-bot': {
           await rt.bootstrap()
-          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
+          const bot = await rt.createBot({ name: body.name, role: body.role, intro: body.intro, instructions: body.instructions, capabilities: body.capabilities, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
           return ok(bot)
         }
         case 'update-bot':
           await rt.load()
           return ok(await rt.updateBot(body.id, body))
+        case 'update-profile':
+          await rt.load()
+          return ok(await rt.updateProfile(body.id, body))
+        case 'mark-read':
+          return ok(await rt.markRead(body))
+        case 'react':
+          return ok(await rt.react(body))
         case 'delete-bot':
           await rt.load()
           await rt.deleteBot(body.id)
@@ -266,6 +335,7 @@ export function install(rt) {
           }
           return ok(true)
         case 'secret-set':
+        case 'secret-create':
         case 'secret-allow':
         case 'secret-cancel':
         case 'secret-update':
@@ -380,7 +450,7 @@ export function install(rt) {
     fetch: async (request) => {
       let body
       try { body = await request.json() } catch { body = {} }
-      const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
+      const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal, originOf(request))
       return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
     },
   }), 'ds-bot: api route')

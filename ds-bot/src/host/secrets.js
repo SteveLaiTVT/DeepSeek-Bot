@@ -1,7 +1,10 @@
-// Secrets: keys the user types into a card for a Bot. A value lives only in
-// secrets.json (mode 600) and in this process; Bots use it as $DSH_SECRET_<NAME> in
-// their shell, tool results lose it before they are saved, and every model request
-// has it replaced by [secret:<NAME>] before it leaves.
+// Secrets: keys the user types into a card or creates in Settings. A value lives in
+// DSH's credential store under its `DSH_SECRET_<NAME>` reference when that service is
+// there, and only in this process otherwise. `secrets.json` (mode 600) keeps the
+// metadata — name, purpose, scope, times — and holds the values too when DSH has no
+// credential store. Bots use a value as $DSH_SECRET_<NAME> in their shell, tool results
+// lose it before they are saved, and every model request has it replaced by
+// [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -96,6 +99,29 @@ export function install(rt) {
   let writing = Promise.resolve()
   let redact = text => text
   let refreshEnv = () => {}
+  // False when DSH's credential store exists but refused a value: the file then keeps
+  // the values, so nothing is lost. Read on every write, as the service may register
+  // after this plugin starts.
+  let credentialsUsable = true
+  const credentialsOf = () => ctx.get?.('credentials')
+  const storeValue = async (name, value) => {
+    const store = credentialsOf()
+    if (store === undefined) return false
+    try {
+      await store.set(envName(name), value)
+      credentialsUsable = true
+      return true
+    } catch (error) {
+      credentialsUsable = false
+      rt.warn('ds-bot: secret %s not stored in DSH credentials, keeping it in %s: %s', name, path, reason(error))
+      return false
+    }
+  }
+  const dropValue = async (name) => {
+    const store = credentialsOf()
+    if (store === undefined) return
+    await store.unset(envName(name)).catch(error => rt.warn('ds-bot: secret %s not removed from DSH credentials: %s', name, reason(error)))
+  }
 
   const changed = () => {
     redact = redactor([...secrets.values()])
@@ -116,14 +142,29 @@ export function install(rt) {
   }
   const readSecrets = async () => {
     loadedReadOnly = rt.readOnly() !== undefined
+    const store = credentialsOf()
     try {
       const parsed = JSON.parse(await readFile(path, 'utf8'))
       secrets.clear()
       for (const entry of Array.isArray(parsed?.secrets) ? parsed.secrets : []) {
         if (!SECRET_NAME.test(entry?.name ?? '') || typeof entry.value !== 'string') continue
+        let value = entry.value
+        if (store !== undefined) {
+          let stored
+          try {
+            stored = (await store.resolve(envName(entry.name)))?.value
+          } catch (error) {
+            rt.warn('ds-bot: secret %s not read from DSH credentials: %s', entry.name, reason(error))
+          }
+          if (typeof stored === 'string' && stored !== '') value = stored
+          // A value from before this version moves into the credential store once.
+          else if (value !== '') await storeValue(entry.name, value)
+        }
+        // The credential store no longer holds it: there is no secret to use.
+        if (value === '') continue
         secrets.set(entry.name, {
           name: entry.name,
-          value: entry.value,
+          value,
           purpose: typeof entry.purpose === 'string' ? entry.purpose : '',
           scope: entry.scope === 'all' ? 'all' : Array.isArray(entry.scope) ? entry.scope.filter(id => typeof id === 'string') : 'all',
           requestedBy: typeof entry.requestedBy === 'string' ? entry.requestedBy : null,
@@ -141,10 +182,14 @@ export function install(rt) {
   }
 
   // Resolves once secrets.json holds the current map; rejects when the write failed.
+  // With DSH's credential store in use, the file keeps metadata only: a value never
+  // sits on disk in two places.
   const persist = () => {
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) return Promise.reject(new Error(readOnly))
-    const snapshot = JSON.stringify({ version: 1, secrets: [...secrets.values()] }, null, 2)
+    const keepValues = credentialsOf() === undefined || !credentialsUsable
+    const entries = [...secrets.values()].map(({ value, ...meta }) => (keepValues ? { ...meta, value } : meta))
+    const snapshot = JSON.stringify({ version: 1, secrets: entries }, null, 2)
     const job = writing.then(async () => {
       await mkdir(home, { recursive: true })
       const temp = `${path}.${process.pid}.${randomUUID()}.tmp`
@@ -272,6 +317,22 @@ export function install(rt) {
   const secretsView = () => [...secrets.values()].sort((a, b) => a.name.localeCompare(b.name)).map(secretView)
 
   const endpoints = {
+    // The user creates a key in Settings; the value comes in and never goes back out.
+    async 'secret-create'(body) {
+      const name = normalizeName(body.name)
+      if (!SECRET_NAME.test(name)) throw new Error('A name uses capitals, digits, and underscores, and starts with a letter')
+      if (secrets.has(name)) throw new Error(`${name} already exists. Change its scope, or delete it first.`)
+      const value = cleanValue(body.value)
+      const now = Date.now()
+      const scope = body.scope === undefined ? 'all' : cleanScope(body.scope)
+      const purpose = typeof body.purpose === 'string' ? body.purpose.trim().slice(0, 300) : ''
+      await storeValue(name, value)
+      secrets.set(name, { name, value, purpose, scope, requestedBy: null, createdAt: now, updatedAt: now })
+      const notes = []
+      reconcile(name, notes)
+      await commit(notes)
+      return secretView(secrets.get(name))
+    },
     // From a card (requestId) or from the settings page (name).
     async 'secret-set'(body) {
       const value = cleanValue(body.value)
@@ -283,6 +344,7 @@ export function install(rt) {
         let scope
         if (existing === undefined || request.kind === 'fill') scope = body.scope === 'bot' ? [botId] : 'all'
         else scope = existing.scope === 'all' ? 'all' : [...new Set([...existing.scope, botId])]
+        await storeValue(request.name, value)
         secrets.set(request.name, {
           name: request.name,
           value,
@@ -302,6 +364,7 @@ export function install(rt) {
       const name = normalizeName(body.name)
       if (!SECRET_NAME.test(name)) throw new Error('A name uses capitals, digits, and underscores, and starts with a letter')
       const existing = secrets.get(name)
+      await storeValue(name, value)
       secrets.set(name, {
         name,
         value,
@@ -348,6 +411,7 @@ export function install(rt) {
     async 'secret-delete'(body) {
       const name = normalizeName(body.name)
       if (!secrets.delete(name)) throw new Error('No such key')
+      await dropValue(name)
       const notes = []
       reconcile(name, notes)
       await commit(notes)

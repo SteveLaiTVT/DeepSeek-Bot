@@ -2,7 +2,7 @@
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
+import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, BOT_INTRO_MAX } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 
@@ -70,6 +70,30 @@ export function install(rt) {
     return Object.keys(avatar).length > 0 ? avatar : undefined
   }
 
+  // A Bot's introduction: a short paragraph in the user's own words, not a task list.
+  // Over the limit is refused, never cut: the user decides what to leave out.
+  function cleanIntro(raw) {
+    const text = String(raw ?? '').replace(/\r\n?/g, '\n').trim()
+    if (text.length > BOT_INTRO_MAX) throw new Error(`An introduction holds at most ${BOT_INTRO_MAX} characters; this one has ${text.length}`)
+    return text
+  }
+
+  // The shared capabilities a Bot attaches, as names that exist in the library.
+  // Undefined means "leave the list as it is".
+  function cleanCapabilities(raw) {
+    if (raw === undefined) return undefined
+    if (!Array.isArray(raw)) throw new Error('Capabilities must be a list of names')
+    const items = state.capabilities?.items ?? {}
+    const names = []
+    for (const value of raw) {
+      const name = String(value ?? '').trim()
+      if (name === '') continue
+      if (!rt.own(items, name)) throw new Error(`No capability named ${name}`)
+      if (!names.includes(name)) names.push(name)
+    }
+    return names
+  }
+
   // A new Bot or group is written only after its Session is made, several awaits after
   // its name was checked. The name is held from the check until the create ends, so a
   // create or rename that runs meanwhile cannot take it too.
@@ -105,8 +129,11 @@ export function install(rt) {
     return holdName('bot', cleanName, () => buildBot(cleanName, options))
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false }) {
+  async function buildBot(cleanName, { role = '', intro = '', instructions = '', capabilities, color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false }) {
     const cleanAvatarValue = cleanAvatar(avatar)
+    // Validated before the Session is made, so a refused profile leaves nothing behind.
+    const introText = cleanIntro(intro)
+    const attached = cleanCapabilities(capabilities) ?? []
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
@@ -127,9 +154,10 @@ export function install(rt) {
         ...(effortId ? { effort: effortId } : {}),
         ...(dir ? { workDir: dir } : {}),
         instructions: String(instructions).trim(),
+        ...(introText ? { intro: introText } : {}),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
-        capabilities: [],
+        capabilities: attached,
       }
       if (main) state.mainBotIds.push(id)
       const creator = rt.botOf(createdBy)
@@ -197,7 +225,9 @@ export function install(rt) {
     return createBot({
       name: freshName(`${bot.name} copy`),
       role: bot.role,
+      intro: bot.intro,
       instructions: bot.instructions,
+      capabilities: [...(bot.capabilities ?? [])],
       color: bot.color,
       avatar: bot.avatar,
       model: served ? bot.model : undefined,
@@ -205,6 +235,34 @@ export function install(rt) {
       workDir,
       copyOf: bot.id,
     })
+  }
+
+  // The profile card: role, introduction, instructions, and capabilities in one write.
+  // Each field is checked before any is written, so a refused field leaves the Bot as
+  // it was (the card shows the error and keeps the user's text).
+  async function updateProfile(id, patch = {}) {
+    const bot = rt.botOf(id)
+    if (bot === undefined) throw new Error('Unknown Bot')
+    // A profile is written whole: every field the caller means to keep comes with it,
+    // and one that does not pass leaves all of them as they were.
+    const missing = ['role', 'intro', 'instructions'].filter(field => patch[field] === undefined)
+    if (missing.length > 0) throw new Error(`A profile needs ${missing.join(', ')}; send an empty string to clear one.`)
+    const role = String(patch.role ?? '').trim().slice(0, 24)
+    const intro = cleanIntro(patch.intro)
+    const instructions = String(patch.instructions ?? '').trim()
+    const capabilities = cleanCapabilities(patch.capabilities) ?? [...(bot.capabilities ?? [])]
+    const before = JSON.stringify(bot.capabilities ?? [])
+    bot.role = role
+    if (intro === '') delete bot.intro
+    else bot.intro = intro
+    bot.instructions = instructions
+    bot.capabilities = capabilities
+    await rt.save()
+    if (JSON.stringify(capabilities) !== before) {
+      await rt.trackBotCapabilities?.(bot)
+      void rt.scheduleCapabilitiesReconcile?.()
+    }
+    return bot
   }
 
   async function updateBot(id, patch) {
@@ -482,6 +540,8 @@ export function install(rt) {
   async function deleteRoom(id) {
     const room = rt.roomOf(id)
     if (room === undefined) throw new Error('Unknown group chat')
+    // Before the group leaves the state, which the archive reads.
+    const archived = rt.archiveRoomMemory?.(id)
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
     delete state.rooms[id]
     rt.roomInbox.delete(id)
@@ -491,6 +551,7 @@ export function install(rt) {
     // the deleted group; the session-stop that stopActivity runs removes them.
     await ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
       .catch(error => rt.warn('ds-bot: group chat %s not archived: %s', room.name, error))
+    await archived
     if (failed !== undefined) throw failed
   }
 
@@ -589,7 +650,8 @@ export function install(rt) {
   }
 
   Object.assign(rt, {
-    ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags,
+    ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, updateProfile, setFlags,
+    freshBotName: base => freshName(base),
     roomBusy, autoRoomName, retitleRoom, createRoom, updateRoom, deleteRoom,
     setMain, deleteBot, bootstrap, dropKickoff,
   })

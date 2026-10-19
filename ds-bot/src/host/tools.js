@@ -58,7 +58,7 @@ export function install(rt) {
       const lines = Object.values(state.bots).map(bot => {
         const model = bot.appliedModel ?? bot.model
         const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
-        const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
+        const job = bot.intro ? ` — ${bot.intro.split('\n')[0].slice(0, 200)}` : bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
         const now = bot.id === self ? '' : `\n  now: ${rt.statusOf(bot.id)}`
         return `- ${bot.name}${tags ? ` (${tags})` : ''}${job}${now}`
       })
@@ -247,7 +247,9 @@ export function install(rt) {
     parameters: {
       name: { type: 'string', required: true, description: 'Short display name, e.g. "Researcher" or "Editor"' },
       role: { type: 'string', required: true, description: 'Two-to-four character role label shown under the name' },
+      intro: { type: 'string', description: 'One short paragraph the user reads: what this Bot is for and when to come to it, in the user\'s language (at most 300 characters)' },
       instructions: { type: 'string', required: true, description: 'What this Bot is responsible for and how it should work' },
+      capabilities: { type: 'array', items: { type: 'string' }, description: 'Names from list_capabilities to attach to the new Bot' },
       brief: { type: 'string', description: 'Why the user wants it, passed to the new Bot as its first context' },
       model: { type: 'string', description: 'Model the Bot runs on, as provider/model or a model id. Only when the user names one; otherwise the model you run on.' },
       effort: { type: 'string', description: 'Thinking level for the model, as list_models shows it. Only when the user names one.' },

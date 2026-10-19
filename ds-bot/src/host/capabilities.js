@@ -520,6 +520,7 @@ export function install(rt) {
     capabilityStatusesView,
     reconcileCapabilities: reconcile,
     scheduleCapabilitiesReconcile: scheduleReconcile,
+    trackBotCapabilities: trackBotAgents,
     ensureCapabilities,
     expandCapabilities: names => expandCapabilityNames(names, library()),
     changeCapabilityAttachment: changeAttachment,

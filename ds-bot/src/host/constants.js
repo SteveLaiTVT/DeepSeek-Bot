@@ -19,6 +19,12 @@ export const OCR_TIMEOUT_MS = 120_000
 export const OCR_RETRY_MS = 120_000
 export const OCR_CACHE_MAX = 500
 export const MAX_AVATAR_IMAGE = 160_000
+// A Bot's introduction: what it is for, in the user's words, shown in the roster and
+// the identity prompt.
+export const BOT_INTRO_MAX = 300
+// How far apart two messages must be before a time separator appears. The user can
+// change it in Settings → General (1 to 60 minutes).
+export const TIME_GAP_MINUTES = 2
 export const ROUTE = '/api/bot'
 export const MAX_EXCHANGES = 600
 // state.json is written whole on every save, so a long message between Bots or a long

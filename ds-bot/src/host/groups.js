@@ -172,9 +172,11 @@ export function install(rt) {
 
   const appendRoom = (room, line) => {
     room.seq += 1
-    const log = [...room.log, keepGroupLine(room.id, { ...line, seq: room.seq }, line.text ?? '')]
+    const kept = keepGroupLine(room.id, { time: Date.now(), ...line, seq: room.seq }, line.text ?? '')
+    const log = [...room.log, kept]
     for (const gone of log.slice(0, -ROOM_LOG_MAX)) dropGroupLine(room.id, gone)
     room.log = log.slice(-ROOM_LOG_MAX)
+    return kept
   }
   Object.assign(rt, { keepGroupLine, dropGroupLines })
 
@@ -218,7 +220,7 @@ export function install(rt) {
   // `files` are the files of the lines shown, which go to the member with the prompt.
   function roomPrompt(room, member, round) {
     const peers = room.members.filter(id => id !== member.id).map(rt.botOf).filter(Boolean)
-      .map(bot => `${bot.name}${rt.isAdminOf(room, bot.id) ? ' (admin)' : ''}`)
+      .map(bot => `${bot.name}${rt.isAdminOf(room, bot.id) ? ' (admin)' : ''}${bot.intro ? ` — ${headOf(bot.intro.replace(/\s+/g, ' '), 120)}` : ''}`)
     const leads = rt.isAdminOf(room, member.id)
     const lines = unseenLines(room, member.id)
     const earlier = lines.filter(line => line.seq < round.startSeq).slice(-ROOM_EARLIER_MAX)
@@ -259,8 +261,8 @@ export function install(rt) {
   // A member's message in the round: in the log, for the members after it, and in the
   // round's replies, for the user.
   const postInRound = (room, round, member, text) => {
-    appendRoom(room, { who: member.name, botId: member.id, text })
-    round.replies.push({ botId: member.id, name: member.name, color: member.color, text, time: Date.now() })
+    const line = appendRoom(room, { who: member.name, botId: member.id, text })
+    round.replies.push({ botId: member.id, name: member.name, color: member.color, text, time: line.time })
     void rt.save().catch(() => {})
   }
 
