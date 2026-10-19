@@ -26,7 +26,6 @@ import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
 import { STORAGE, migrateStorage } from './storage.js'
-import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
 import { installLocale, language, t } from './i18n.js'
 import { noteClientError, quietly } from './diagnostics.js'
@@ -42,14 +41,40 @@ export function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
   migrateStorage()
-  const unreadStore = sharedMap(STORAGE.unread)
-  const reactionStore = sharedMap(STORAGE.reactions)
-  // When each conversation was last left; a visit compares new turns against it.
-  const seenStore = sharedMap(STORAGE.seen)
-  let seenAt = seenStore.read()
+  // Reads and reactions belong to the team, not to this browser: the host keeps them in
+  // state.json so every window and every device shows the same. What an older release
+  // left in localStorage is uploaded once (see `importLegacyMarks`).
+  let seenAt = {}
+  const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const stored = (key) => {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) ?? 'null')
+      return isPlainObject(value) ? value : null
+    } catch {
+      return null
+    }
+  }
+  // `reads` is `{ [id]: { seen, unread } }`: the two shapes this window renders from it
+  // are the unread set and when each conversation was last left.
+  const takeReads = (reads) => {
+    const unread = {}
+    const seen = {}
+    for (const [id, mark] of Object.entries(isPlainObject(reads) ? reads : {})) {
+      if (!isPlainObject(mark)) continue
+      if (mark.unread === true) unread[id] = true
+      if (Number.isFinite(mark.seen)) seen[id] = mark.seen
+    }
+    seenAt = seen
+    ui.set(state => (sameJson(state.unread, unread) ? state : { ...state, unread }))
+  }
+  const takeReactions = (reactions) => {
+    const next = isPlainObject(reactions) ? reactions : {}
+    ui.set(state => (sameJson(state.reactions, next) ? state : { ...state, reactions: next }))
+  }
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: {}, reactions: {}, visits: {} })
   // Bot mode paints the whole team surface; Agent mode withdraws every slot and
   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
   // view hosts a plain session, which drops only the conversation replacements.
@@ -76,26 +101,24 @@ export function apply(ctx) {
   const dropPanels = () => ui.set(state => (state.details || state.renaming ? { ...state, details: null, view: 'details', renaming: false, tab: null } : state))
   // A Bot's chat spans several parts, so when it was last left is kept per Bot.
   const seenKey = id => roster.getSnapshot().byId?.[id]?.id ?? id
-  const leaveVisits = (ids) => {
-    seenAt = seenStore.update(seen => noteLeft(seen, ids.map(seenKey), Date.now()), seenAt)
+  // Leaving a conversation marks it read on the host, which answers with every mark so
+  // this window and the others agree at once.
+  const leaveVisits = async (ids) => {
+    if (ids.length === 0) return
+    const now = Date.now()
+    const entries = {}
+    for (const id of ids) entries[seenKey(id)] = { seen: now }
+    try {
+      takeReads(await call('mark-read', { entries }))
+    } catch (error) {
+      quietly('mark read')(error)
+    }
   }
   ctx.effect(() => {
-    const onPageHide = () => leaveVisits(Object.keys(ui.getSnapshot().visits ?? {}))
+    const onPageHide = () => { void leaveVisits(Object.keys(ui.getSnapshot().visits ?? {})) }
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
   }, 'ds-bot: remember visits on page hide')
-  // Unread marks, reactions and visits are shared by every window; one saved elsewhere
-  // shows here at once. A `null` key is a cleared storage.
-  ctx.effect(() => {
-    const onStorage = (event) => {
-      if (event.storageArea !== localStorage) return
-      if (event.key === null || event.key === unreadStore.key) ui.set(state => ({ ...state, unread: unreadStore.read(state.unread) }))
-      if (event.key === null || event.key === reactionStore.key) ui.set(state => ({ ...state, reactions: reactionStore.read(state.reactions) }))
-      if (event.key === null || event.key === seenStore.key) seenAt = seenStore.read(seenAt)
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, 'ds-bot: follow other windows')
   const activity = createSource({})
   // Per Bot, the turn it runs and its tool; and the approvals waiting for the user.
   const work = createSource({ bots: {}, approvals: [] })
@@ -124,9 +147,12 @@ export function apply(ctx) {
   const PREFS_KEY = STORAGE.prefs
   let savedPrefs = {}
   try { savedPrefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') ?? {} } catch { savedPrefs = {} }
-  const writeUnread = (id, value) => {
-    const unread = unreadStore.update(marks => setUnread(marks, id, value), ui.getSnapshot().unread)
-    ui.set(state => (JSON.stringify(state.unread) === JSON.stringify(unread) ? state : { ...state, unread }))
+  const writeUnread = async (id, value) => {
+    try {
+      takeReads(await call('mark-read', { id, unread: value }))
+    } catch (error) {
+      quietly('mark read')(error)
+    }
   }
   const refreshed = new Set()
   // Pulls can overlap (the poll and a navigation); an older answer never wins.
@@ -150,8 +176,11 @@ export function apply(ctx) {
     if (value.capabilityStatuses !== undefined && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live.capabilityStatuses = value.capabilityStatuses
     if (Object.keys(live).length > 0 && current.ready) roster.set({ ...current, ...live })
     if (value.unchanged || (value.revision === current.revision && value.modelsKey === current.modelsKey)) return
-    // On a browser with no visit record yet, everything already there counts as seen.
-    if (Object.keys(seenAt).length === 0) leaveVisits([...value.bots, ...value.rooms].map(entry => entry.id))
+    // A team with no read marks yet: everything already there counts as seen.
+    const reads = isPlainObject(value.reads) ? value.reads : {}
+    if (Object.keys(reads).length === 0 && value.bots.length + value.rooms.length > 0) await leaveVisits([...value.bots, ...value.rooms].map(entry => entry.id))
+    else takeReads(reads)
+    takeReactions(value.reactions)
     roster.set(indexRoster(value))
     try {
       const ids = (value.agents ?? []).flatMap(agent => agent.sessions ?? [])
@@ -170,6 +199,27 @@ export function apply(ctx) {
     }
   }
 
+  // Reads and reactions lived in localStorage before the host kept them. A browser that
+  // still has a copy uploads it once, then drops the keys: the call merges rather than
+  // replaces, so a retry after a failure saves nothing twice.
+  const importLegacyMarks = async () => {
+    const unread = stored(STORAGE.unread)
+    const seen = stored(STORAGE.seen)
+    const reactions = stored(STORAGE.reactions)
+    if (unread === null && seen === null && reactions === null) return
+    const entries = {}
+    for (const [id, flag] of Object.entries(unread ?? {})) if (flag === true) entries[id] = { ...entries[id], unread: true }
+    for (const [id, at] of Object.entries(seen ?? {})) if (Number.isFinite(Number(at))) entries[id] = { ...entries[id], seen: Number(at) }
+    const done = Object.keys(entries).length === 0
+      || await call('mark-read', { entries }).then(() => true, () => false)
+    const reacted = reactions === null
+      || await call('react', { entries: reactions }).then(() => true, () => false)
+    try {
+      if (done) for (const key of [STORAGE.unread, STORAGE.seen]) localStorage.removeItem(key)
+      if (reacted) localStorage.removeItem(STORAGE.reactions)
+    } catch { /* storage unavailable */ }
+  }
+
   ctx.effect(() => {
     let stopped = false
     let running = false
@@ -183,7 +233,7 @@ export function apply(ctx) {
     }
     const wake = () => { if (!document.hidden) void loop() }
     document.addEventListener('visibilitychange', wake)
-    void loop()
+    void importLegacyMarks().catch(quietly('import read marks')).then(() => { if (!stopped) void loop() })
     return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
   }, 'ds-bot: roster poll')
 
@@ -462,7 +512,7 @@ export function apply(ctx) {
       ui.set(state => ({ ...state, visits: { ...state.visits, [id]: { seen, entered: Date.now() } } }))
     },
     endVisit: (id) => {
-      leaveVisits([id])
+      void leaveVisits([id])
       ui.set((state) => {
         if (!(id in (state.visits ?? {}))) return state
         const visits = { ...state.visits }
@@ -470,9 +520,12 @@ export function apply(ctx) {
         return { ...state, visits }
       })
     },
-    toggleReaction: (key, index, emoji) => {
-      const reactions = reactionStore.update(saved => toggleReaction(saved, key, index, emoji), ui.getSnapshot().reactions)
-      ui.set(state => ({ ...state, reactions }))
+    toggleReaction: async (key, index, emoji) => {
+      try {
+        takeReactions(await call('react', { key, index, emoji }))
+      } catch (error) {
+        quietly('react')(error)
+      }
     },
     clearUnread: id => writeUnread(id, false),
     // DSH's right sidebar (files, terminals), which a plugin may load after this one.

@@ -4,7 +4,7 @@ import { CharacterGrid, avatarImage } from './bot-settings.js'
 import { DEFAULT_SHAPES, DEFAULT_COLORS } from './characters.js'
 import { ChevronLeftIcon, CloseIcon } from './icons.js'
 import { useEscape } from './overlay-hooks.js'
-import { createPayload, freshBotName, startModel } from './bot-draft.js'
+import { createPayload } from './bot-draft.js'
 import { ModelMenu } from './model-menu.js'
 import { hostText, t } from './i18n.js'
 import { nameProblem } from '../shared/mentions.js'
@@ -22,7 +22,9 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
   const [look, setLook] = useState(() => randomLook())
   const [image, setImage] = useState(null)
   const [name, setName] = useState(start?.name ?? '')
-  const [model, setModel] = useState(() => startModel(roster))
+  // The host says what a new Bot starts on (a free name, the DSH default model), so
+  // the form never works it out on its own.
+  const [model, setModel] = useState(() => roster.defaults?.model ?? '')
   const [effort, setEffort] = useState(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -31,7 +33,7 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
   useEscape(onBack)
   // Inside Settings the form opens below other sections, so it scrolls itself into view.
   useEffect(() => { if (inline) frame.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }, [])
-  const fallbackName = freshBotName(roster, t('New Bot'))
+  const fallbackName = roster.defaults?.name ?? t('New Bot')
   const finalName = name.trim() || fallbackName
   const clash = roster.bots.some(bot => bot.name.toLowerCase() === finalName.toLowerCase())
   const problem = nameProblem(finalName)

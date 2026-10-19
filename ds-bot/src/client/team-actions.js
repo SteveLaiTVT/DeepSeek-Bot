@@ -32,10 +32,11 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, tur
     showDetails: (id, tab = null) => { ui.set(state => ({ ...state, details: id, view: 'details', renaming: false, tab })) },
     // Opening the conversation would move focus to its composer and blur the name field.
     renameBot: (id) => { ui.set(state => ({ ...state, details: id, view: 'details', renaming: true, tab: null })) },
-    // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
+    // `id` opens one Bot's memory (page 'bots') or one group chat's project memory
+    // (page 'groups'); the panel reads which from the roster.
     openSettings: (page = 'general', id = null) => { ui.set(state => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null })) },
     closeSettings: () => { ui.set(state => (state.settings ? { ...state, settings: null } : state)) },
-    openMemory: (botId) => { ui.set(state => ({ ...state, memory: botId, menu: null, palette: null })) },
+    openMemory: (id) => { ui.set(state => ({ ...state, memory: id, menu: null, palette: null })) },
     closeMemory: () => { ui.set(state => (state.memory ? { ...state, memory: null } : state)) },
     openConnectors: () => { ui.set(state => ({ ...state, settings: { page: 'connectors', id: null }, menu: null, palette: null, newChat: null })) },
     setPanelView: (view) => {
@@ -53,6 +54,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, tur
     createBot: payload => after(call('create-bot', payload)),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
+    // The label, introduction, and instructions of one Bot, checked together.
+    updateProfile: (id, patch) => after(call('update-profile', { id, ...patch })),
     refreshModels: () => after(call('models')).catch(() => {}),
     efforts: ref => call('efforts', { ref }),
     folders: () => call('folders'),
@@ -69,6 +72,7 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, tur
     answerApproval: (id, choice) => after(call('approval-answer', { id, choice })),
     stopMemberWork: (roomId, botId) => after(call('stop-member-work', { roomId, botId })),
     // Values go out in these requests and never come back in a response.
+    secretCreate: payload => after(call('secret-create', payload)),
     secretSet: payload => after(call('secret-set', payload)),
     secretAllow: requestId => after(call('secret-allow', { requestId })),
     secretCancel: requestId => after(call('secret-cancel', { requestId })),
@@ -91,10 +95,12 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, tur
     earlier: (sessionId, cursor) => call('earlier', { sessionId, cursor: cursor ?? null }),
     // Hours come back in this browser's time zone, so days start at local midnight.
     usage: () => call('usage', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+    // A memory request names its subject: `{ botId }`, or `{ roomId }` for a group's
+    // project memory. The host decides what each subject may read and write.
     // `summarize` starts a summary when the entries changed; `regenerate` always does.
-    memoryView: (botId, flags = {}) => call('memory-view', { botId, ...flags }),
-    memoryAsk: (botId, text) => call('memory-ask', { botId, text }),
-    memoryForget: (botId, entry) => call('memory-forget', { botId, scope: entry.scope, topic: entry.topic, text: entry.text }),
+    memoryView: payload => call('memory-view', payload),
+    memoryAsk: payload => call('memory-ask', payload),
+    memoryForget: payload => call('memory-forget', payload),
     diagnostics: payload => call('diagnostics', payload),
     diagnosticsLog: () => call('diagnostics-log'),
     diagnosticsClear: () => call('diagnostics-clear'),

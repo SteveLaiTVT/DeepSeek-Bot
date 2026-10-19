@@ -25,6 +25,9 @@ const MASK_BY_CSS = typeof CSS !== 'undefined' && typeof CSS.supports === 'funct
 
 const insecure = () => typeof location !== 'undefined' && location.protocol === 'http:'
   && !/^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/.test(location.hostname)
+// The host takes a key only from this machine or over https, so elsewhere there is no
+// point typing one: say why instead of failing on Save.
+const BLOCKED_HINT = 'A key can only be saved on this computer or over https. Open DS Bot at an https address, or set the key on the machine that runs it.'
 
 const scopeLabel = (scope, roster) => {
   if (scope === 'all') return t('All Bots')
@@ -95,7 +98,7 @@ export function SecretCard({ bot, request, roster, actions }) {
   const save = () => { if (long && !busy) void run(actions.secretSet({ requestId: request.id, value, scope })) }
   const allow = () => { if (!busy) void run(actions.secretAllow(request.id)) }
   const filling = request.kind === 'fill' || replacing
-  const warn = insecure() ? h('div', { className: 'bt-secret-warn', role: 'note' }, h(WarnIcon), t('This page is not on HTTPS: the key crosses the network unencrypted.')) : null
+  const warn = insecure() ? h('div', { className: 'bt-secret-warn', role: 'note' }, h(WarnIcon), t(BLOCKED_HINT)) : null
   return h('div', { className: 'bt-q bt-secret', role: 'group', 'aria-describedby': noteId, 'data-kind': request.kind },
     h(SecretHead, {
       bot,
@@ -117,7 +120,7 @@ export function SecretCard({ bot, request, roster, actions }) {
       request.kind === 'allow' && !replacing ? h('button', { type: 'button', className: 'bt-q-btn', disabled: busy, onClick: () => setReplacing(true) }, t('Replace value')) : null,
       h('button', { type: 'button', className: 'bt-q-btn', disabled: busy, onClick: cancel }, t('Cancel')),
       filling
-        ? h('button', { type: 'button', className: 'bt-q-submit', disabled: !long || busy, onClick: save }, busy ? t('Saving…') : t('Save'))
+        ? h('button', { type: 'button', className: 'bt-q-submit', disabled: !long || busy || insecure(), onClick: save }, busy ? t('Saving…') : t('Save'))
         : h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: allow }, busy ? t('Allowing…') : t('Allow'))))
 }
 
@@ -237,15 +240,17 @@ function AddSecret({ actions, run, onDone }) {
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
   const [value, setValue] = useState('')
-  const ready = /^[A-Za-z][\w-]{0,63}$/.test(name.trim()) && value.trim().length >= MIN_VALUE
+  // A new key: the host turns down a name that is taken, so the row says which one.
+  const ready = /^[A-Za-z][\w-]{0,63}$/.test(name.trim()) && value.trim().length >= MIN_VALUE && !insecure()
   const save = () => {
     if (!ready) return
-    void run(actions.secretSet({ name, purpose, value, scope: 'all' })).then(ok => { if (ok) { setValue(''); onDone() } })
+    void run(actions.secretCreate({ name, purpose, value, scope: 'all' })).then(ok => { if (ok) { setValue(''); onDone() } })
   }
   return h('div', { className: 'bt-set-row bt-set-paste bt-secret-add' },
     h('input', { className: 'bt-input', 'aria-label': t('Key name'), placeholder: t('NAME, e.g. GITHUB_TOKEN'), value: name, spellCheck: false, autoComplete: 'off', autoFocus: true, onChange: event => setName(event.target.value.toUpperCase()) }),
     h('input', { className: 'bt-input', 'aria-label': t('What it is for'), placeholder: t('What it is for'), value: purpose, autoComplete: 'off', onChange: event => setPurpose(event.target.value) }),
     h('label', { className: 'bt-q-field bt-secret-field' }, h(MaskedInput, { value, onChange: setValue, onEnter: save, label: t('Value') })),
+    insecure() ? h('div', { className: 'bt-secret-warn', role: 'note' }, h(WarnIcon), t(BLOCKED_HINT)) : null,
     h('div', { className: 'bt-secret-row-actions' },
       h('span', { className: 'bt-set-hint' }, t('New keys are for all Bots; narrow it down afterwards.')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onDone }, t('Cancel')),

@@ -8,7 +8,7 @@ import { ModelMenu, modelOf } from './model-menu.js'
 import { FolderMenu } from './folder-menu.js'
 import { BotSchedules } from './schedules.js'
 import { BotCapabilitiesCard } from './capability-settings.js'
-import { useMemoryCount } from './memory-panel.js'
+import { useMemoryCount, subjectOfBot } from './memory-panel.js'
 import { SPRING_SHAPE, SPRING_TAP, spring, useGlide } from './motion.js'
 import { t } from './i18n.js'
 
@@ -38,8 +38,9 @@ export async function avatarImage(file) {
 }
 
 // Settings save on blur or Enter, with no Save button; Escape puts the
-// saved value back. A required field never saves empty.
-export function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, onSave }) {
+// saved value back. A required field never saves empty. `counter` adds the length of
+// what is typed over `maxLength`, for the fields the host measures.
+export function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, counter = false, onSave }) {
   const [draft, setDraft] = useState(null)
   const reverting = useRef(false)
   const commit = () => {
@@ -49,7 +50,7 @@ export function InlineText({ label, value, placeholder, required = false, maxLen
     if (next === undefined || next === (value ?? '') || (required && next === '')) return
     void onSave(next)
   }
-  return h(multiline ? 'textarea' : 'input', {
+  const control = h(multiline ? 'textarea' : 'input', {
     className: multiline ? 'bt-bs-input bt-bs-area' : 'bt-bs-input', value: draft ?? value ?? '', placeholder, maxLength, required, 'aria-label': label, spellCheck: false,
     onChange: event => setDraft(event.target.value),
     onBlur: commit,
@@ -58,6 +59,9 @@ export function InlineText({ label, value, placeholder, required = false, maxLen
       if (event.key === 'Enter' && !multiline && !event.nativeEvent.isComposing) event.currentTarget.blur()
     },
   })
+  if (!counter) return control
+  return h('span', { className: 'bt-bs-count-wrap' }, control,
+    h('span', { className: 'bt-bs-count', 'aria-hidden': true }, `${(draft ?? value ?? '').length} / ${maxLength ?? 300}`))
 }
 
 // One labelled card row with its control on the right, or below when `stack`.
@@ -179,7 +183,7 @@ function AvatarEditor({ bot, actions, run, onClose }) {
 }
 
 function MemoryCard({ bot, actions }) {
-  const count = useMemoryCount(bot.id, actions)
+  const count = useMemoryCount(subjectOfBot(bot), actions)
   const label = count === null ? t('Loading…') : count === 0 ? t('Nothing saved yet') : count === 1 ? t('1 entry') : t('{count} entries', { count })
   return h(Card, { title: t('Memory') },
     h('button', { type: 'button', className: 'bt-set-row bt-bs-row', 'aria-label': t("Manage {name}'s memory", { name: bot.name }), onClick: () => actions.openMemory(bot.id) },
@@ -203,6 +207,11 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1
   const isTile = roster.mainBotId === bot.id
   const save = patch => run(actions.updateBot(bot.id, patch))
+  // The host checks a profile whole: the label, the introduction, and the instructions
+  // go in one request, so a field that does not pass leaves the other two as they were.
+  const saveProfile = patch => run(actions.updateProfile(bot.id, {
+    role: bot.role ?? '', intro: bot.intro ?? '', instructions: bot.instructions ?? '', ...patch,
+  }))
   const duplicate = () => run(actions.duplicateBot(bot.id).then(copy => actions.openSession(copy.id)))
   const remove = () => { if (confirming) void run(actions.deleteBot(bot.id)); else setConfirming(true) }
   // DSH settings can change the model list at any time; the hint should match it.
@@ -219,7 +228,10 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
         h('span', { className: 'bt-bs-sub' }, [bot.role, isMainBot ? t('Main Bot') : ''].filter(Boolean).join(' · ') || t('Bot')))),
     h(Card, { title: t('Profile') },
       h(Row, { label: t('Name') }, h(InlineText, { label: t('Name'), value: bot.name, placeholder: 'Bob', required: true, maxLength: 40, onSave: name => save({ name }) })),
-      h(Row, { label: t('Label'), hint: t('Optional. Shown under the name.') }, h(InlineText, { label: t('Label'), value: bot.role, placeholder: t('Research, admin…'), maxLength: 24, onSave: role => save({ role }) }))),
+      h(Row, { label: t('Label'), hint: t('Optional. Shown under the name.') }, h(InlineText, { label: t('Label'), value: bot.role, placeholder: t('Research, admin…'), maxLength: 24, onSave: role => saveProfile({ role }) })),
+      // What the other Bots read when they look for the one to hand work to.
+      h(Row, { label: t('Introduction'), hint: t('Who this Bot is and when to ask it. Other Bots read it to pick who does what.'), stack: true },
+        h(InlineText, { label: t('Introduction'), value: bot.intro, multiline: true, maxLength: roster.limits?.intro ?? 300, counter: true, placeholder: t('Writes the docs and keeps them in step with the code…'), onSave: intro => saveProfile({ intro }) }))),
     h(Card, { title: t('Model') },
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Model')), h('span', { className: 'bt-set-hint' }, modelHint(bot, roster))),
@@ -230,7 +242,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
         h(FolderMenu, { value: bot.workDir, actions, run, onPick: workDir => save({ workDir }) }))),
     h(Card, { title: t('Instructions') },
       h(Row, { label: t('What this Bot does'), hint: t('Its job on the team. Part of the Bot\'s system prompt.'), stack: true },
-        h(InlineText, { label: t('Instructions'), value: bot.instructions, multiline: true, placeholder: t('What this Bot is responsible for…'), onSave: instructions => save({ instructions }) }))),
+        h(InlineText, { label: t('Instructions'), value: bot.instructions, multiline: true, placeholder: t('What this Bot is responsible for…'), onSave: instructions => saveProfile({ instructions }) }))),
     h(BotCapabilitiesCard, { bot, roster, actions, run, Card, SwitchRow }),
     roster.memory === false ? null : h(MemoryCard, { bot, actions }),
     h(BotSchedules, { bot, roster, actions }),
@@ -274,6 +286,8 @@ label.bt-bs-row{cursor:text}
 .bt-bs-input:focus{background:var(--bt-main);border-color:var(--bt-line-2);text-align:left}
 .bt-bs-input::placeholder{color:var(--bt-ink-3)}
 .bt-bs-stack{flex-direction:column;align-items:stretch;gap:8px}
+.bt-bs-count-wrap{display:flex;flex-direction:column;gap:4px;width:100%}
+.bt-bs-count{align-self:flex-end;font-size:11px;line-height:14px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums}
 .bt-bs-area{flex:none;width:auto;min-height:112px;height:auto;margin:0 -6px -4px;padding:8px;line-height:19px;text-align:left;resize:vertical;background:var(--bt-hover)}
 .bt-bs-area:hover{background:var(--bt-active)}
 .bt-bs-danger .bt-bs-label{color:var(--bt-danger)}

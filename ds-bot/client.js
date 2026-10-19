@@ -53,11 +53,15 @@ var ZH = {
   "New…": "新建",
   "Collapse sidebar": "收起侧边栏",
   "Expand sidebar": "展开侧边栏",
-  "Animation": "动画",
+  Animation: "动画",
   "Bot animation": "Bot 动画",
   "Quiet": "安静",
   "Normal": "正常",
   "Lively": "活泼",
+  Chat: "聊天",
+  "Time separators": "时间分隔线",
+  "A pause of at least this many minutes between messages shows the time.": "两条消息之间隔了这么久，就显示一行时间。",
+  "Minutes between time separators": "时间分隔线的分钟数",
   Settings: "设置",
   Usage: "用量",
   Account: "账户",
@@ -301,6 +305,9 @@ var ZH = {
   "Optional. Shown under the name.": "可选，显示在名字下方。",
   "Research, admin…": "研究、行政…",
   "What this Bot does": "这个 Bot 做什么",
+  "Introduction": "简介",
+  "Who this Bot is and when to ask it. Other Bots read it to pick who does what.": "这个 Bot 是谁、什么时候找它。其他 Bot 会读它来决定谁来做什么。",
+  "Writes the docs and keeps them in step with the code…": "写文档，并让文档跟上代码…",
   "Its job on the team. Part of the Bot's system prompt.": "它在团队里的分工，会写进 Bot 的系统提示词。",
   "A copy with the same job and model, and fresh memory.": "复制分工和模型，记忆从零开始。",
   "Delete {name}?": "删除 {name}？",
@@ -652,6 +659,7 @@ var ZH = {
   "Secrets · {count}": "密钥 · {count}",
   "No keys yet. When a Bot needs one, it shows a card in its chat.": "还没有密钥。Bot 需要时，会在对话里弹出一张卡片。",
   "Add a key": "添加密钥",
+  "A key can only be saved on this computer or over https. Open DS Bot at an https address, or set the key on the machine that runs it.": "密钥只能在运行它的这台电脑上保存，或者通过 https 访问时保存。请用 https 地址打开 DS Bot，或直接在运行它的机器上设置。",
   // Memory
   Memory: "记忆",
   "Nothing saved yet": "还没有保存内容",
@@ -674,6 +682,15 @@ var ZH = {
   "Bots keep lasting preferences, decisions, and what you ask them to remember. Tell {name} below, or in its chat.": "Bot 会记住长期的偏好、做过的决定，以及你让它记住的事。可以在下面告诉 {name}，也可以在对话里说。",
   "Team memory": "团队记忆",
   "Every Bot reads it": "所有 Bot 都会读",
+  "This group chat's project memory": "本群的项目记忆",
+  "Its members read it while they speak here": "成员在群里说话时会读它",
+  "Manage the project memory of {name}": "管理 {name} 的项目记忆",
+  "Project memory · {count}": "项目记忆 · {count}",
+  "Its members read it while they speak here. The team memory is not read in this group.": "成员在群里说话时会读它。团队记忆不会在这个群里读取。",
+  "Nothing saved for this group chat yet": "这个群还没有保存内容",
+  "The members of this group chat keep what later work here needs, and read it while they speak here. Tell {name} below, or in the group chat.": "群成员会把之后在这里干活需要的东西记下来，在群里说话时会读到。可以在下面告诉 {name}，也可以在群里说。",
+  "Added to this group chat's project memory: {text}": "已加入本群的项目记忆：{text}",
+  "Ask about or update this group chat's project memory": "询问或更新本群的项目记忆",
   "MEMORY.md, which every conversation reads": "MEMORY.md，每次对话都会读",
   "{used} of {limit} characters": "{used} / {limit} 字符",
   "by you": "由你添加",
@@ -1414,15 +1431,16 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     renameBot: (id) => {
       ui2.set((state) => ({ ...state, details: id, view: "details", renaming: true, tab: null }));
     },
-    // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
+    // `id` opens one Bot's memory (page 'bots') or one group chat's project memory
+    // (page 'groups'); the panel reads which from the roster.
     openSettings: (page = "general", id = null) => {
       ui2.set((state) => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null }));
     },
     closeSettings: () => {
       ui2.set((state) => state.settings ? { ...state, settings: null } : state);
     },
-    openMemory: (botId) => {
-      ui2.set((state) => ({ ...state, memory: botId, menu: null, palette: null }));
+    openMemory: (id) => {
+      ui2.set((state) => ({ ...state, memory: id, menu: null, palette: null }));
     },
     closeMemory: () => {
       ui2.set((state) => state.memory ? { ...state, memory: null } : state);
@@ -1453,6 +1471,8 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     createBot: (payload) => after(call2("create-bot", payload)),
     createRoom: (members, options = {}) => after(call2("create-room", { members, ...options })),
     updateBot: (id, patch) => after(call2("update-bot", { id, ...patch })),
+    // The label, introduction, and instructions of one Bot, checked together.
+    updateProfile: (id, patch) => after(call2("update-profile", { id, ...patch })),
     refreshModels: () => after(call2("models")).catch(() => {
     }),
     efforts: (ref) => call2("efforts", { ref }),
@@ -1470,6 +1490,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     answerApproval: (id, choice) => after(call2("approval-answer", { id, choice })),
     stopMemberWork: (roomId, botId) => after(call2("stop-member-work", { roomId, botId })),
     // Values go out in these requests and never come back in a response.
+    secretCreate: (payload) => after(call2("secret-create", payload)),
     secretSet: (payload) => after(call2("secret-set", payload)),
     secretAllow: (requestId) => after(call2("secret-allow", { requestId })),
     secretCancel: (requestId) => after(call2("secret-cancel", { requestId })),
@@ -1492,10 +1513,12 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     earlier: (sessionId, cursor) => call2("earlier", { sessionId, cursor: cursor ?? null }),
     // Hours come back in this browser's time zone, so days start at local midnight.
     usage: () => call2("usage", { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+    // A memory request names its subject: `{ botId }`, or `{ roomId }` for a group's
+    // project memory. The host decides what each subject may read and write.
     // `summarize` starts a summary when the entries changed; `regenerate` always does.
-    memoryView: (botId, flags = {}) => call2("memory-view", { botId, ...flags }),
-    memoryAsk: (botId, text) => call2("memory-ask", { botId, text }),
-    memoryForget: (botId, entry) => call2("memory-forget", { botId, scope: entry.scope, topic: entry.topic, text: entry.text }),
+    memoryView: (payload) => call2("memory-view", payload),
+    memoryAsk: (payload) => call2("memory-ask", payload),
+    memoryForget: (payload) => call2("memory-forget", payload),
     diagnostics: (payload) => call2("diagnostics", payload),
     diagnosticsLog: () => call2("diagnostics-log"),
     diagnosticsClear: () => call2("diagnostics-clear"),
@@ -2608,6 +2631,9 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-set-copy{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bt-set-hint{font-size:12px;line-height:16px;color:color-mix(in srgb,var(--bt-ink-2) 50%,var(--bt-ink-3))}
 .bt-set-control{flex:none;display:flex;align-items:center;gap:6px}
+.bt-set-inline{display:flex;align-items:center;gap:6px}
+.bt-input-number{width:64px;height:32px;text-align:center;font-size:13px;padding:0 6px}
+.bt-set-unit{font-size:12px;color:var(--bt-ink-2)}
 .bt-set-value{font-size:13px;color:var(--bt-ink-2);text-align:right}
 .bt-set-bot{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .bt-set-paste{flex-direction:column;align-items:stretch;gap:8px}
@@ -3728,6 +3754,7 @@ var WarnIcon = () => (0, import_react5.createElement)(
 );
 var MASK_BY_CSS = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-text-security", "disc");
 var insecure = () => typeof location !== "undefined" && location.protocol === "http:" && !/^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/.test(location.hostname);
+var BLOCKED_HINT = "A key can only be saved on this computer or over https. Open DS Bot at an https address, or set the key on the machine that runs it.";
 var scopeLabel = (scope, roster) => {
   if (scope === "all") return t("All Bots");
   const names = (scope ?? []).map((id) => roster.byId[id]?.name).filter(Boolean);
@@ -3811,7 +3838,7 @@ function SecretCard({ bot, request, roster, actions }) {
     if (!busy) void run(actions.secretAllow(request.id));
   };
   const filling = request.kind === "fill" || replacing;
-  const warn = insecure() ? (0, import_react5.createElement)("div", { className: "bt-secret-warn", role: "note" }, (0, import_react5.createElement)(WarnIcon), t("This page is not on HTTPS: the key crosses the network unencrypted.")) : null;
+  const warn = insecure() ? (0, import_react5.createElement)("div", { className: "bt-secret-warn", role: "note" }, (0, import_react5.createElement)(WarnIcon), t(BLOCKED_HINT)) : null;
   return (0, import_react5.createElement)(
     "div",
     { className: "bt-q bt-secret", role: "group", "aria-describedby": noteId, "data-kind": request.kind },
@@ -3844,7 +3871,7 @@ function SecretCard({ bot, request, roster, actions }) {
       { className: "bt-q-foot" },
       request.kind === "allow" && !replacing ? (0, import_react5.createElement)("button", { type: "button", className: "bt-q-btn", disabled: busy, onClick: () => setReplacing(true) }, t("Replace value")) : null,
       (0, import_react5.createElement)("button", { type: "button", className: "bt-q-btn", disabled: busy, onClick: cancel }, t("Cancel")),
-      filling ? (0, import_react5.createElement)("button", { type: "button", className: "bt-q-submit", disabled: !long || busy, onClick: save }, busy ? t("Saving…") : t("Save")) : (0, import_react5.createElement)("button", { type: "button", className: "bt-q-submit", disabled: busy, onClick: allow }, busy ? t("Allowing…") : t("Allow"))
+      filling ? (0, import_react5.createElement)("button", { type: "button", className: "bt-q-submit", disabled: !long || busy || insecure(), onClick: save }, busy ? t("Saving…") : t("Save")) : (0, import_react5.createElement)("button", { type: "button", className: "bt-q-submit", disabled: busy, onClick: allow }, busy ? t("Allowing…") : t("Allow"))
     )
   );
 }
@@ -4002,10 +4029,10 @@ function AddSecret({ actions, run, onDone }) {
   const [name, setName] = (0, import_react5.useState)("");
   const [purpose, setPurpose] = (0, import_react5.useState)("");
   const [value, setValue] = (0, import_react5.useState)("");
-  const ready = /^[A-Za-z][\w-]{0,63}$/.test(name.trim()) && value.trim().length >= MIN_VALUE;
+  const ready = /^[A-Za-z][\w-]{0,63}$/.test(name.trim()) && value.trim().length >= MIN_VALUE && !insecure();
   const save = () => {
     if (!ready) return;
-    void run(actions.secretSet({ name, purpose, value, scope: "all" })).then((ok) => {
+    void run(actions.secretCreate({ name, purpose, value, scope: "all" })).then((ok) => {
       if (ok) {
         setValue("");
         onDone();
@@ -4018,6 +4045,7 @@ function AddSecret({ actions, run, onDone }) {
     (0, import_react5.createElement)("input", { className: "bt-input", "aria-label": t("Key name"), placeholder: t("NAME, e.g. GITHUB_TOKEN"), value: name, spellCheck: false, autoComplete: "off", autoFocus: true, onChange: (event) => setName(event.target.value.toUpperCase()) }),
     (0, import_react5.createElement)("input", { className: "bt-input", "aria-label": t("What it is for"), placeholder: t("What it is for"), value: purpose, autoComplete: "off", onChange: (event) => setPurpose(event.target.value) }),
     (0, import_react5.createElement)("label", { className: "bt-q-field bt-secret-field" }, (0, import_react5.createElement)(MaskedInput, { value, onChange: setValue, onEnter: save, label: t("Value") })),
+    insecure() ? (0, import_react5.createElement)("div", { className: "bt-secret-warn", role: "note" }, (0, import_react5.createElement)(WarnIcon), t(BLOCKED_HINT)) : null,
     (0, import_react5.createElement)(
       "div",
       { className: "bt-secret-row-actions" },
@@ -4455,6 +4483,18 @@ function stackReplies(replies) {
   });
   return items;
 }
+function replyClockMarks(items, replies, gap) {
+  const marks = /* @__PURE__ */ new Map();
+  let previous;
+  items.forEach((item, position) => {
+    const start = item.reply.time;
+    if (Number.isFinite(start) && previous !== void 0 && start - previous >= gap) marks.set(item.index, start);
+    const next = items[position + 1];
+    const end = (next === void 0 ? replies.at(-1) : replies[next.index - 1])?.time;
+    previous = Number.isFinite(end) ? end : start;
+  });
+  return marks;
+}
 function GroupEvent({ prefix, room: room2, name, roster, actions }) {
   return (0, import_react7.createElement)(
     "div",
@@ -4562,6 +4602,7 @@ function ChatRows({ items, sessionId, roster, actions, useUi, clock: clock4 = fa
     } else rows.push(item.kind === "bot" ? { kind: "bot", texts: [item.text], time: item.time, end: item.time } : item);
   }
   let before;
+  const gap = timeGapMs(roster.prefs);
   return rows.flatMap((row, index) => {
     const key = rows.length - index;
     const shown = chatRow(row, key, { sessionId, selfId, roster, actions, useUi });
@@ -4569,7 +4610,7 @@ function ChatRows({ items, sessionId, roster, actions, useUi, clock: clock4 = fa
       before = void 0;
       return [shown];
     }
-    const pause = clock4 && Number.isFinite(row.time) && (before === void 0 || row.time - before >= SEPARATOR_GAP_MS);
+    const pause = clock4 && Number.isFinite(row.time) && (before === void 0 || row.time - before >= gap);
     if (Number.isFinite(row.end ?? row.time)) before = row.end ?? row.time;
     return pause ? [(0, import_react7.createElement)("div", { key: `${key}:clock`, className: "bt-time-sep", role: "separator" }, clockLabel(row.time)), shown] : [shown];
   });
@@ -4704,7 +4745,8 @@ function TurnProcessCell({ node, sessionId, turnProcess, useRoster, useUi, useTu
 function Nothing() {
   return null;
 }
-var SEPARATOR_GAP_MS = 30 * 60 * 1e3;
+var DEFAULT_TIME_GAP_MINUTES = 2;
+var timeGapMs = (prefs) => (Number.isInteger(prefs?.timeGapMinutes) ? prefs.timeGapMinutes : DEFAULT_TIME_GAP_MINUTES) * 6e4;
 function clockLabel(time, now = Date.now()) {
   const date = new Date(time);
   const midnight = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
@@ -4733,15 +4775,16 @@ function openingTurn(turns, firstTurns, hiddenTurns) {
   return listed.includes(turn) && earlier.every((entry) => hiddenTurns?.includes(entry)) ? { turn, start } : null;
 }
 var unseenSince = (visit, time) => typeof visit?.seen === "number" && time > visit.seen && time <= visit.entered;
-function TurnTailCell({ turn: location2, sessionId, useTurnClock, useUi, actions }) {
+function TurnTailCell({ turn: location2, sessionId, useTurnClock, useRoster, useUi, actions }) {
   const turn = location2.turn;
   const time = location2.end.time;
   (0, import_react7.useEffect)(() => {
     actions.noteTurnTime(sessionId, turn, "end", time);
   }, [sessionId, turn, time]);
+  const gap = timeGapMs(useRoster((value) => value.prefs));
   const label = useTurnClock((state) => {
     const start = nextTurnStart(state[sessionId] ?? {}, turn);
-    return start !== void 0 && start - time >= SEPARATOR_GAP_MS ? clockLabel(start) : "";
+    return start !== void 0 && start - time >= gap ? clockLabel(start) : "";
   });
   const visit = useUi((state) => state.visits?.[sessionId]);
   const fresh = useTurnClock((state) => {
@@ -4886,61 +4929,70 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
   const speakerDoing = useWork?.((work) => work.bots?.[live.speaking]?.tool ? workPhrase(work.bots[live.speaking]) : void 0) ?? void 0;
   if (replies.length === 0 && pending.length === 0) return null;
   const room2 = roster.roomsById[sessionId];
+  const rows = stackReplies(replies);
+  const marks = replyClockMarks(rows, replies, timeGapMs(roster.prefs));
+  const shown = rows.map(({ reply, index, texts: texts2 }) => {
+    const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
+    if (reply.kind === "user") {
+      return (0, import_react7.createElement)("div", { key: `user-${index}`, className: "bt-urow" }, (0, import_react7.createElement)(
+        "div",
+        { className: "bt-ububble" },
+        (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
+      ));
+    }
+    if (reply.kind === "failed") {
+      return (0, import_react7.createElement)(
+        "div",
+        { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: [reply.code, reply.status, reply.text].filter(Boolean).join(" · ") },
+        t("{name} could not answer: {reason}", { name: bot.name, reason: failureLabel(reply.code, reply.text) })
+      );
+    }
+    if (reply.kind === "lookup") {
+      return (0, import_react7.createElement)(
+        "div",
+        { key: `${reply.botId}-${index}`, className: "bt-event" },
+        reply.text ? t("{name} looked up its own chat for “{text}”", { name: bot.name, text: reply.text }) : t("{name} looked up its own chat", { name: bot.name })
+      );
+    }
+    if (reply.kind === "missed") {
+      return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} didn't answer in time", { name: bot.name }));
+    }
+    if (reply.kind === "resumed") {
+      return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} was cut off by a restart and picked its work back up", { name: bot.name }));
+    }
+    if (reply.kind === "cut") {
+      return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} was cut off by a restart again and stopped", { name: bot.name }));
+    }
+    if (reply.kind === "approval" || reply.kind === "working") {
+      return (0, import_react7.createElement)(
+        "div",
+        { key: `${reply.botId}-${index}`, className: "bt-event" },
+        (0, import_react7.createElement)(
+          "button",
+          { type: "button", className: "bt-event-whole", onClick: () => actions.showDetails(sessionId) },
+          (0, import_react7.createElement)(BotMark, { bot, size: 16 }),
+          (0, import_react7.createElement)("span", { className: "bt-event-name" }, t(reply.kind === "working" ? "{name} started on it" : "{name} paused for your approval", { name: bot.name }))
+        )
+      );
+    }
+    if (reply.kind === "stopped") {
+      return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
+    }
+    if (reply.kind === "done") {
+      return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} finished its work", { name: bot.name }));
+    }
+    return (0, import_react7.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, texts: texts2, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
+  });
+  const children = [];
+  shown.forEach((node, position) => {
+    const at = marks.get(rows[position].index);
+    if (at !== void 0) children.push((0, import_react7.createElement)("div", { key: `clock-${rows[position].index}`, className: "bt-time-sep", role: "separator" }, clockLabel(at)));
+    children.push(node);
+  });
   return (0, import_react7.createElement)(
     "div",
     { className: "bt-group-replies" },
-    stackReplies(replies).map(({ reply, index, texts: texts2 }) => {
-      const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
-      if (reply.kind === "user") {
-        return (0, import_react7.createElement)("div", { key: `user-${index}`, className: "bt-urow" }, (0, import_react7.createElement)(
-          "div",
-          { className: "bt-ububble" },
-          (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
-        ));
-      }
-      if (reply.kind === "failed") {
-        return (0, import_react7.createElement)(
-          "div",
-          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: [reply.code, reply.status, reply.text].filter(Boolean).join(" · ") },
-          t("{name} could not answer: {reason}", { name: bot.name, reason: failureLabel(reply.code, reply.text) })
-        );
-      }
-      if (reply.kind === "lookup") {
-        return (0, import_react7.createElement)(
-          "div",
-          { key: `${reply.botId}-${index}`, className: "bt-event" },
-          reply.text ? t("{name} looked up its own chat for “{text}”", { name: bot.name, text: reply.text }) : t("{name} looked up its own chat", { name: bot.name })
-        );
-      }
-      if (reply.kind === "missed") {
-        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} didn't answer in time", { name: bot.name }));
-      }
-      if (reply.kind === "resumed") {
-        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} was cut off by a restart and picked its work back up", { name: bot.name }));
-      }
-      if (reply.kind === "cut") {
-        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} was cut off by a restart again and stopped", { name: bot.name }));
-      }
-      if (reply.kind === "approval" || reply.kind === "working") {
-        return (0, import_react7.createElement)(
-          "div",
-          { key: `${reply.botId}-${index}`, className: "bt-event" },
-          (0, import_react7.createElement)(
-            "button",
-            { type: "button", className: "bt-event-whole", onClick: () => actions.showDetails(sessionId) },
-            (0, import_react7.createElement)(BotMark, { bot, size: 16 }),
-            (0, import_react7.createElement)("span", { className: "bt-event-name" }, t(reply.kind === "working" ? "{name} started on it" : "{name} paused for your approval", { name: bot.name }))
-          )
-        );
-      }
-      if (reply.kind === "stopped") {
-        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
-      }
-      if (reply.kind === "done") {
-        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("{name} finished its work", { name: bot.name }));
-      }
-      return (0, import_react7.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, texts: texts2, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
-    }),
+    children,
     pending.map((id) => {
       const bot = roster.byId[id];
       if (!bot) return null;
@@ -7927,33 +7979,38 @@ function BotCapabilitiesCard({ bot, roster, actions, run, Card: Card2, SwitchRow
 var import_react18 = require("react");
 var POLL_MS2 = 1500;
 var MENU_EXIT_MS2 = 120;
+var subjectOfBot = (bot) => ({ kind: "bot", id: bot.id, name: bot.name });
+var subjectOfRoom = (room2) => ({ kind: "room", id: room2.id, name: room2.name });
+var subjectKey = (subject) => subject.kind === "room" ? `room:${subject.id}` : subject.id;
+var payloadOf = (subject) => subject.kind === "room" ? { roomId: subject.id } : { botId: subject.id };
 var counts = /* @__PURE__ */ new Map();
 var countListeners = /* @__PURE__ */ new Set();
-function noteCount(botId, count) {
-  if (counts.get(botId) === count) return;
-  counts.set(botId, count);
+function noteCount(key, count) {
+  if (counts.get(key) === count) return;
+  counts.set(key, count);
   for (const listener of countListeners) listener();
 }
-function useMemoryCount(botId, actions) {
-  const [count, setCount] = (0, import_react18.useState)(counts.get(botId) ?? null);
+function useMemoryCount(subject, actions) {
+  const key = subjectKey(subject);
+  const [count, setCount] = (0, import_react18.useState)(counts.get(key) ?? null);
   (0, import_react18.useEffect)(() => {
-    const listener = () => setCount(counts.get(botId) ?? null);
+    const listener = () => setCount(counts.get(key) ?? null);
     countListeners.add(listener);
     listener();
     let stop = false;
-    actions.memoryView?.(botId).then((view) => {
-      if (!stop) noteCount(botId, view.entries.length);
+    actions.memoryView?.(payloadOf(subject)).then((view) => {
+      if (!stop) noteCount(key, view.entries.length);
     }).catch(() => {
     });
     return () => {
       stop = true;
       countListeners.delete(listener);
     };
-  }, [botId]);
+  }, [key]);
   return count;
 }
 function MemoryRow({ bot, actions }) {
-  const count = useMemoryCount(bot.id, actions);
+  const count = useMemoryCount(subjectOfBot(bot), actions);
   const label = count === null ? t("Loading…") : count === 0 ? t("Nothing saved yet") : count === 1 ? t("1 entry") : t("{count} entries", { count });
   return (0, import_react18.createElement)(
     "div",
@@ -7993,14 +8050,14 @@ function Skeleton({ label }) {
     label ? (0, import_react18.createElement)("div", { className: "bt-mem-skel-label" }, label) : null
   );
 }
-function Summary({ bot, view, regenerate }) {
+function Summary({ subject, view, regenerate }) {
   if (view.entries.length === 0) {
     return (0, import_react18.createElement)(
       "div",
       { className: "bt-mem-empty" },
       (0, import_react18.createElement)("div", { className: "bt-mem-empty-mark" }, (0, import_react18.createElement)(MemoryIcon)),
-      (0, import_react18.createElement)("div", { className: "bt-mem-empty-title" }, t("{name} has not saved anything yet", { name: bot.name })),
-      (0, import_react18.createElement)("div", { className: "bt-mem-empty-text" }, t("Bots keep lasting preferences, decisions, and what you ask them to remember. Tell {name} below, or in its chat.", { name: bot.name }))
+      (0, import_react18.createElement)("div", { className: "bt-mem-empty-title" }, subject.kind === "room" ? t("Nothing saved for this group chat yet") : t("{name} has not saved anything yet", { name: subject.name })),
+      (0, import_react18.createElement)("div", { className: "bt-mem-empty-text" }, subject.kind === "room" ? t("The members of this group chat keep what later work here needs, and read it while they speak here. Tell {name} below, or in the group chat.", { name: subject.name }) : t("Bots keep lasting preferences, decisions, and what you ask them to remember. Tell {name} below, or in its chat.", { name: subject.name }))
     );
   }
   const failed = view.error && !view.summarizing ? (0, import_react18.createElement)(
@@ -8066,10 +8123,10 @@ function EntryRow({ entry, remove }) {
     }, confirming ? t("Remove") : (0, import_react18.createElement)(TrashIcon))
   );
 }
-function Entries({ bot, view, remove }) {
+function Entries({ subject, view, remove }) {
   const groups = groupEntries(view.entries);
-  const sections = [
-    { scope: "own", title: t("{name}'s memory", { name: bot.name }), size: view.sizes.own },
+  const sections = subject.kind === "room" ? [{ scope: "project", title: t("This group chat's project memory"), hint: t("Its members read it while they speak here"), size: view.sizes.team }] : [
+    { scope: "own", title: t("{name}'s memory", { name: subject.name }), size: view.sizes.own },
     { scope: "team", title: t("Team memory"), hint: t("Every Bot reads it"), size: view.sizes.team }
   ];
   return (0, import_react18.createElement)(
@@ -8099,6 +8156,7 @@ function changeLine(change) {
   if (!change.ok) return t("Not changed: {text} ({reason})", { text, reason: hostText(change.error ?? "") });
   if (change.op === "remove") return change.scope === "team" ? t("Removed from team memory: {text}", { text }) : t("Removed: {text}", { text });
   if (change.op === "edit") return t("Updated: {text}", { text });
+  if (change.scope === "project") return t("Added to this group chat's project memory: {text}", { text });
   return change.scope === "team" ? t("Added to team memory: {text}", { text }) : t("Added: {text}", { text });
 }
 function Reply({ answer, dismiss }) {
@@ -8124,7 +8182,8 @@ function Reply({ answer, dismiss }) {
     )
   );
 }
-function useMemoryView(botId, actions) {
+function useMemoryView(subject, actions) {
+  const key = subjectKey(subject);
   const [view, setView] = (0, import_react18.useState)(null);
   const [error, setError] = (0, import_react18.useState)("");
   const timer = (0, import_react18.useRef)(0);
@@ -8133,20 +8192,20 @@ function useMemoryView(botId, actions) {
   const show = (0, import_react18.useCallback)((next) => {
     setView(next);
     setError("");
-    noteCount(botId, next.entries.length);
-  }, [botId]);
+    noteCount(key, next.entries.length);
+  }, [key]);
   const load = (0, import_react18.useCallback)(async (flags = {}) => {
     clearTimeout(timer.current);
     const ticket = ++latest.current;
     try {
-      const next = await actions.memoryView(botId, flags);
+      const next = await actions.memoryView({ ...payloadOf(subject), ...flags });
       if (!alive.current || ticket !== latest.current) return;
       show(next);
       if (next.summarizing) timer.current = setTimeout(() => void load({ summarize: flags.summarize || flags.regenerate }), POLL_MS2);
     } catch (failure) {
       if (alive.current && ticket === latest.current) setError(failure?.message ?? String(failure));
     }
-  }, [botId]);
+  }, [key]);
   (0, import_react18.useEffect)(() => {
     alive.current = true;
     void load({ summarize: true });
@@ -8154,7 +8213,7 @@ function useMemoryView(botId, actions) {
       alive.current = false;
       clearTimeout(timer.current);
     };
-  }, [botId]);
+  }, [key]);
   return { view, error, load, show };
 }
 function useNow(every) {
@@ -8165,8 +8224,8 @@ function useNow(every) {
   }, [every]);
   return now;
 }
-function MemoryDialog({ bot, actions, leaving = false }) {
-  const { view, error, load, show } = useMemoryView(bot.id, actions);
+function MemoryDialog({ subject, actions, leaving = false }) {
+  const { view, error, load, show } = useMemoryView(subject, actions);
   const [page, setPage] = (0, import_react18.useState)("summary");
   const [menu, setMenu] = (0, import_react18.useState)(false);
   const [menuShown, menuLeaving] = useLinger(menu, MENU_EXIT_MS2);
@@ -8213,7 +8272,7 @@ function MemoryDialog({ bot, actions, leaving = false }) {
   };
   const remove = async (entry) => {
     try {
-      show(await actions.memoryForget(bot.id, entry));
+      show(await actions.memoryForget({ ...payloadOf(subject), scope: entry.scope, topic: entry.topic, text: entry.text }));
       return true;
     } catch (failure) {
       setAnswer({ asked: entry.text, error: failure?.message ?? String(failure) });
@@ -8227,7 +8286,7 @@ function MemoryDialog({ bot, actions, leaving = false }) {
     setText("");
     setAnswer({ asked, pending: true });
     try {
-      const result = await actions.memoryAsk(bot.id, asked);
+      const result = await actions.memoryAsk({ ...payloadOf(subject), text: asked });
       setAnswer({ asked, reply: result.reply, changes: result.changes });
       show(result.view);
       if (result.changes.some((change) => change.ok)) void load({ summarize: page === "summary" });
@@ -8240,19 +8299,20 @@ function MemoryDialog({ bot, actions, leaving = false }) {
   const when3 = view?.summary ? ago(view.summary.at, now) : null;
   const status = view === null ? "" : page === "entries" ? count === 1 ? t("1 entry") : t("{count} entries", { count }) : view.summarizing && view.summary ? t("Updating…") : view.summary && view.fresh ? when3 ? t("Updated {time}", { time: when3 }) : t("Updated just now") : "";
   const busy = answer?.pending === true;
+  const where = subject.kind === "room" ? t("This group chat's project memory") : t("{name}'s memory", { name: subject.name });
   return (0, import_react18.createElement)(
     "div",
     { className: "bt-mem-layer", "data-leaving": leaving || void 0 },
     (0, import_react18.createElement)("div", { className: "bt-scrim bt-mem-scrim", onMouseDown: close }),
     (0, import_react18.createElement)(
       "div",
-      { className: "bt-mem", role: "dialog", "aria-modal": true, "aria-label": t("{name}'s memory", { name: bot.name }) },
+      { className: "bt-mem", role: "dialog", "aria-modal": true, "aria-label": where },
       (0, import_react18.createElement)(
         "div",
         { className: "bt-mem-head" },
         page === "entries" ? (0, import_react18.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": t("Back to the summary"), onClick: backToSummary }, (0, import_react18.createElement)(ChevronLeftIcon)) : null,
         (0, import_react18.createElement)("h2", null, page === "entries" ? t("All entries") : t("Memory summary")),
-        (0, import_react18.createElement)("span", { className: "bt-mem-status" }, page === "summary" ? [bot.name, status].filter(Boolean).join(" · ") : status),
+        (0, import_react18.createElement)("span", { className: "bt-mem-status" }, page === "summary" ? [subject.name, status].filter(Boolean).join(" · ") : status),
         (0, import_react18.createElement)("span", { className: "bt-mem-head-gap" }),
         (0, import_react18.createElement)("button", { ref: dotsRef, type: "button", className: "bt-icon-btn", "aria-label": t("Memory options"), "aria-haspopup": "menu", "aria-expanded": menu, onClick: () => setMenu((value) => !value) }, (0, import_react18.createElement)(DotsIcon)),
         (0, import_react18.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": t("Close memory"), onClick: close }, (0, import_react18.createElement)(CloseIcon)),
@@ -8276,7 +8336,7 @@ function MemoryDialog({ bot, actions, leaving = false }) {
         "div",
         { className: "bt-mem-body" },
         error ? (0, import_react18.createElement)("div", { className: "bt-error", role: "alert", style: { padding: 0 } }, hostText(error)) : null,
-        view === null ? error ? null : (0, import_react18.createElement)(Skeleton) : page === "entries" ? (0, import_react18.createElement)(Entries, { bot, view, remove }) : (0, import_react18.createElement)(Summary, { bot, view, regenerate })
+        view === null ? error ? null : (0, import_react18.createElement)(Skeleton) : page === "entries" ? (0, import_react18.createElement)(Entries, { subject, view, remove }) : (0, import_react18.createElement)(Summary, { subject, view, regenerate })
       ),
       (0, import_react18.createElement)(
         "div",
@@ -8292,7 +8352,7 @@ function MemoryDialog({ bot, actions, leaving = false }) {
             maxLength: 2e3,
             disabled: view === null,
             placeholder: t("Ask or update"),
-            "aria-label": t("Ask about or update {name}'s memory", { name: bot.name }),
+            "aria-label": subject.kind === "room" ? t("Ask about or update this group chat's project memory") : t("Ask about or update {name}'s memory", { name: subject.name }),
             onChange: (event) => setText(event.target.value)
           }),
           (0, import_react18.createElement)(
@@ -8330,7 +8390,7 @@ async function avatarImage(file) {
   if (png.length < 15e4) return png;
   throw new Error(t("That image is too large"));
 }
-function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, onSave }) {
+function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, counter = false, onSave }) {
   const [draft, setDraft] = (0, import_react19.useState)(null);
   const reverting = (0, import_react19.useRef)(false);
   const commit = () => {
@@ -8343,7 +8403,7 @@ function InlineText({ label, value, placeholder, required = false, maxLength, mu
     if (next === void 0 || next === (value ?? "") || required && next === "") return;
     void onSave(next);
   };
-  return (0, import_react19.createElement)(multiline ? "textarea" : "input", {
+  const control = (0, import_react19.createElement)(multiline ? "textarea" : "input", {
     className: multiline ? "bt-bs-input bt-bs-area" : "bt-bs-input",
     value: draft ?? value ?? "",
     placeholder,
@@ -8362,6 +8422,13 @@ function InlineText({ label, value, placeholder, required = false, maxLength, mu
       if (event.key === "Enter" && !multiline && !event.nativeEvent.isComposing) event.currentTarget.blur();
     }
   });
+  if (!counter) return control;
+  return (0, import_react19.createElement)(
+    "span",
+    { className: "bt-bs-count-wrap" },
+    control,
+    (0, import_react19.createElement)("span", { className: "bt-bs-count", "aria-hidden": true }, `${(draft ?? value ?? "").length} / ${maxLength ?? 300}`)
+  );
 }
 function Row({ label, hint, stack = false, children }) {
   return (0, import_react19.createElement)(
@@ -8531,7 +8598,7 @@ function AvatarEditor({ bot, actions, run, onClose }) {
   );
 }
 function MemoryCard({ bot, actions }) {
-  const count = useMemoryCount(bot.id, actions);
+  const count = useMemoryCount(subjectOfBot(bot), actions);
   const label = count === null ? t("Loading…") : count === 0 ? t("Nothing saved yet") : count === 1 ? t("1 entry") : t("{count} entries", { count });
   return (0, import_react19.createElement)(
     Card,
@@ -8557,6 +8624,12 @@ function BotSettingsForm({ bot, roster, actions, run }) {
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1;
   const isTile = roster.mainBotId === bot.id;
   const save = (patch) => run(actions.updateBot(bot.id, patch));
+  const saveProfile = (patch) => run(actions.updateProfile(bot.id, {
+    role: bot.role ?? "",
+    intro: bot.intro ?? "",
+    instructions: bot.instructions ?? "",
+    ...patch
+  }));
   const duplicate = () => run(actions.duplicateBot(bot.id).then((copy2) => actions.openSession(copy2.id)));
   const remove = () => {
     if (confirming) void run(actions.deleteBot(bot.id));
@@ -8593,7 +8666,13 @@ function BotSettingsForm({ bot, roster, actions, run }) {
       Card,
       { title: t("Profile") },
       (0, import_react19.createElement)(Row, { label: t("Name") }, (0, import_react19.createElement)(InlineText, { label: t("Name"), value: bot.name, placeholder: "Bob", required: true, maxLength: 40, onSave: (name) => save({ name }) })),
-      (0, import_react19.createElement)(Row, { label: t("Label"), hint: t("Optional. Shown under the name.") }, (0, import_react19.createElement)(InlineText, { label: t("Label"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => save({ role }) }))
+      (0, import_react19.createElement)(Row, { label: t("Label"), hint: t("Optional. Shown under the name.") }, (0, import_react19.createElement)(InlineText, { label: t("Label"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => saveProfile({ role }) })),
+      // What the other Bots read when they look for the one to hand work to.
+      (0, import_react19.createElement)(
+        Row,
+        { label: t("Introduction"), hint: t("Who this Bot is and when to ask it. Other Bots read it to pick who does what."), stack: true },
+        (0, import_react19.createElement)(InlineText, { label: t("Introduction"), value: bot.intro, multiline: true, maxLength: roster.limits?.intro ?? 300, counter: true, placeholder: t("Writes the docs and keeps them in step with the code…"), onSave: (intro) => saveProfile({ intro }) })
+      )
     ),
     (0, import_react19.createElement)(
       Card,
@@ -8621,7 +8700,7 @@ function BotSettingsForm({ bot, roster, actions, run }) {
       (0, import_react19.createElement)(
         Row,
         { label: t("What this Bot does"), hint: t("Its job on the team. Part of the Bot's system prompt."), stack: true },
-        (0, import_react19.createElement)(InlineText, { label: t("Instructions"), value: bot.instructions, multiline: true, placeholder: t("What this Bot is responsible for…"), onSave: (instructions) => save({ instructions }) })
+        (0, import_react19.createElement)(InlineText, { label: t("Instructions"), value: bot.instructions, multiline: true, placeholder: t("What this Bot is responsible for…"), onSave: (instructions) => saveProfile({ instructions }) })
       )
     ),
     (0, import_react19.createElement)(BotCapabilitiesCard, { bot, roster, actions, run, Card, SwitchRow }),
@@ -8689,6 +8768,8 @@ label.bt-bs-row{cursor:text}
 .bt-bs-input:focus{background:var(--bt-main);border-color:var(--bt-line-2);text-align:left}
 .bt-bs-input::placeholder{color:var(--bt-ink-3)}
 .bt-bs-stack{flex-direction:column;align-items:stretch;gap:8px}
+.bt-bs-count-wrap{display:flex;flex-direction:column;gap:4px;width:100%}
+.bt-bs-count{align-self:flex-end;font-size:11px;line-height:14px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums}
 .bt-bs-area{flex:none;width:auto;min-height:112px;height:auto;margin:0 -6px -4px;padding:8px;line-height:19px;text-align:left;resize:vertical;background:var(--bt-hover)}
 .bt-bs-area:hover{background:var(--bt-active)}
 .bt-bs-danger .bt-bs-label{color:var(--bt-danger)}
@@ -8707,22 +8788,13 @@ label.bt-bs-row{cursor:text}
 `;
 
 // src/client/bot-draft.js
-function freshBotName(roster, base = "New Bot") {
-  const taken = new Set(roster.bots.map((bot) => bot.name.toLowerCase()));
-  if (!taken.has(base.toLowerCase())) return base;
-  let index = 2;
-  while (taken.has(`${base.toLowerCase()} ${index}`)) index += 1;
-  return `${base} ${index}`;
-}
-function startModel(roster) {
-  const models = roster.models ?? [];
-  return (models.find((model) => model.ref === roster.defaultModel) ?? models[0])?.ref ?? "";
-}
-function createPayload({ name, look, image, model, effort, brief }) {
+function createPayload({ name, look, image, model, effort, brief, intro, capabilities }) {
   const payload = { name, color: look.color, avatar: image ? { shape: look.shape, image } : { shape: look.shape } };
   if (model) payload.model = model;
   if (effort) payload.effort = effort;
   if (brief) payload.brief = brief;
+  if (intro) payload.intro = String(intro).trim();
+  if (capabilities) payload.capabilities = capabilities;
   return payload;
 }
 
@@ -8738,7 +8810,7 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
   const [look, setLook] = (0, import_react20.useState)(() => randomLook());
   const [image, setImage] = (0, import_react20.useState)(null);
   const [name, setName] = (0, import_react20.useState)(start?.name ?? "");
-  const [model, setModel] = (0, import_react20.useState)(() => startModel(roster));
+  const [model, setModel] = (0, import_react20.useState)(() => roster.defaults?.model ?? "");
   const [effort, setEffort] = (0, import_react20.useState)(void 0);
   const [busy, setBusy] = (0, import_react20.useState)(false);
   const [error, setError] = (0, import_react20.useState)("");
@@ -8748,7 +8820,7 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
   (0, import_react20.useEffect)(() => {
     if (inline) frame.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, []);
-  const fallbackName = freshBotName(roster, t("New Bot"));
+  const fallbackName = roster.defaults?.name ?? t("New Bot");
   const finalName = name.trim() || fallbackName;
   const clash = roster.bots.some((bot) => bot.name.toLowerCase() === finalName.toLowerCase());
   const problem = nameProblem(finalName);
@@ -9548,6 +9620,25 @@ function GroupPermission({ room: room2, catalog, update }) {
     ) : null
   );
 }
+function RoomMemoryCard({ room: room2, actions }) {
+  const count = useMemoryCount(subjectOfRoom(room2), actions);
+  const label = count === null ? t("Loading…") : count === 0 ? t("Nothing saved yet") : count === 1 ? t("1 entry") : t("{count} entries", { count });
+  return (0, import_react25.createElement)(
+    Card,
+    { title: t("Memory") },
+    (0, import_react25.createElement)(
+      "button",
+      { type: "button", className: "bt-set-row bt-bs-row", "aria-label": t("Manage the project memory of {name}", { name: room2.name }), onClick: () => actions.openMemory(room2.id) },
+      (0, import_react25.createElement)(
+        "span",
+        { className: "bt-set-copy" },
+        (0, import_react25.createElement)("span", { className: "bt-bs-label" }, t("Project memory · {count}", { count: label })),
+        (0, import_react25.createElement)("span", { className: "bt-set-hint" }, t("Its members read it while they speak here. The team memory is not read in this group."))
+      ),
+      (0, import_react25.createElement)("span", { className: "bt-mem-row-go" }, t("Manage"), (0, import_react25.createElement)(ChevronRightIcon))
+    )
+  );
+}
 function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
   const [adding, setAdding] = (0, import_react25.useState)(false);
   const [confirming, setConfirming] = (0, import_react25.useState)(false);
@@ -9633,6 +9724,7 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
       )
     ),
     (0, import_react25.createElement)(GroupPermission, { room: room2, catalog: roster.permissions, update }),
+    roster.memory === false ? null : (0, import_react25.createElement)(RoomMemoryCard, { room: room2, actions }),
     (0, import_react25.createElement)(
       Card,
       { title: t("Members · {count}", { count: members.length }) },
@@ -11506,6 +11598,19 @@ function GeneralPage({ roster, actions, run }) {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => run(actions.setPrefs({ accent: value })), 350);
   };
+  const gap = Number.isInteger(prefs.timeGapMinutes) ? prefs.timeGapMinutes : DEFAULT_TIME_GAP_MINUTES;
+  const [gapText, setGapText] = (0, import_react31.useState)(String(gap));
+  (0, import_react31.useEffect)(() => {
+    setGapText(String(gap));
+  }, [gap]);
+  const setGap = () => {
+    const minutes = Number(gapText);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
+      setGapText(String(gap));
+      return;
+    }
+    run(actions.setPrefs({ timeGapMinutes: minutes }));
+  };
   return [
     (0, import_react31.createElement)(
       SetSection,
@@ -11541,6 +11646,36 @@ function GeneralPage({ roster, actions, run }) {
             { className: "bt-swatch bt-swatch-custom", title: t("Custom accent"), "data-on": Boolean(prefs.accent) && !ACCENT_INKS.some((ink) => INKS[ink][0] === prefs.accent) },
             (0, import_react31.createElement)("input", { type: "color", value: custom, "aria-label": t("Custom accent"), onChange: (event) => pickCustom(event.target.value) })
           )
+        )
+      )
+    ),
+    (0, import_react31.createElement)(
+      SetSection,
+      { key: "chat", title: t("Chat") },
+      (0, import_react31.createElement)(
+        SetRow,
+        { label: t("Time separators"), hint: t("A pause of at least this many minutes between messages shows the time.") },
+        (0, import_react31.createElement)(
+          "div",
+          { className: "bt-set-inline" },
+          (0, import_react31.createElement)("input", {
+            className: "bt-input bt-input-number",
+            type: "number",
+            min: 1,
+            max: 60,
+            step: 1,
+            value: gapText,
+            "aria-label": t("Minutes between time separators"),
+            onChange: (event) => setGapText(event.target.value),
+            onBlur: setGap,
+            onKeyDown: (event) => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                setGap();
+              }
+            }
+          }),
+          (0, import_react31.createElement)("span", { className: "bt-set-unit" }, t("minutes"))
         )
       )
     ),
@@ -13187,7 +13322,9 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
   }, [ui2.details, ui2.view, ui2.renaming, ui2.tab]);
   const pane = open ?? kept;
   const [settings, settingsLeaving] = useLinger(ui2.settings, DIALOG_EXIT_MS);
-  const [memory, memoryLeaving] = useLinger(ui2.memory && roster.byId[ui2.memory] ? ui2.memory : null, DIALOG_EXIT_MS);
+  const memoryOf = (id) => id ? roster.byId[id] ? subjectOfBot(roster.byId[id]) : roster.roomsById?.[id] ? subjectOfRoom(roster.roomsById[id]) : null : null;
+  const [memoryId, memoryLeaving] = useLinger(ui2.memory && memoryOf(ui2.memory) ? ui2.memory : null, DIALOG_EXIT_MS);
+  const memory = memoryOf(memoryId);
   const [menu, menuLeaving] = useLinger(ui2.menu, MENU_EXIT_MS3);
   return (0, import_react36.createElement)(
     import_react36.Fragment,
@@ -13199,7 +13336,7 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
     ui2.voice ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
     menu ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
     settings ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
-    memory && roster.byId[memory] ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null
+    memory ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(MemoryDialog, { key: `${memory.kind}:${memory.id}`, subject: memory, actions, leaving: memoryLeaving }), document.body) : null
   );
 }
 
@@ -13567,28 +13704,6 @@ function setEntry(map, id, value) {
     return rest;
   }
   return { ...map, [id]: value };
-}
-function toggleReaction(reactions, key, index, emoji) {
-  const entry = { ...reactions[key] };
-  const list = entry[index] ?? [];
-  entry[index] = list.includes(emoji) ? list.filter((item) => item !== emoji) : [...list, emoji];
-  if (entry[index].length === 0) delete entry[index];
-  const next = { ...reactions };
-  if (Object.keys(entry).length) next[key] = entry;
-  else delete next[key];
-  return next;
-}
-function setUnread(unread, id, value) {
-  if (Boolean(unread[id]) === value) return unread;
-  const next = { ...unread };
-  if (value) next[id] = true;
-  else delete next[id];
-  return next;
-}
-function noteLeft(seen, ids, now) {
-  const next = { ...seen };
-  for (const id of ids) next[id] = Math.max(Number(next[id]) || 0, now);
-  return next;
 }
 
 // src/client/bot-browsers.js
@@ -14241,11 +14356,33 @@ function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get("locale")), "ds-bot: interface copy");
   const roster = createSource(EMPTY_ROSTER);
   migrateStorage();
-  const unreadStore = sharedMap(STORAGE.unread);
-  const reactionStore = sharedMap(STORAGE.reactions);
-  const seenStore = sharedMap(STORAGE.seen);
-  let seenAt = seenStore.read();
-  const ui2 = createSource({ details: null, view: "details", renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} });
+  let seenAt = {};
+  const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const stored = (key) => {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+      return isPlainObject(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const takeReads = (reads) => {
+    const unread = {};
+    const seen = {};
+    for (const [id, mark] of Object.entries(isPlainObject(reads) ? reads : {})) {
+      if (!isPlainObject(mark)) continue;
+      if (mark.unread === true) unread[id] = true;
+      if (Number.isFinite(mark.seen)) seen[id] = mark.seen;
+    }
+    seenAt = seen;
+    ui2.set((state) => sameJson(state.unread, unread) ? state : { ...state, unread });
+  };
+  const takeReactions = (reactions) => {
+    const next = isPlainObject(reactions) ? reactions : {};
+    ui2.set((state) => sameJson(state.reactions, next) ? state : { ...state, reactions: next });
+  };
+  const ui2 = createSource({ details: null, view: "details", renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: {}, reactions: {}, visits: {} });
   const surface = createSource({ mode: readMode(), plain: false });
   let agentSessionCache = /* @__PURE__ */ new Set();
   try {
@@ -14265,24 +14402,24 @@ function apply(ctx) {
   const setPlain = (plain) => surface.set((state) => state.plain === plain ? state : { ...state, plain });
   const dropPanels = () => ui2.set((state) => state.details || state.renaming ? { ...state, details: null, view: "details", renaming: false, tab: null } : state);
   const seenKey = (id) => roster.getSnapshot().byId?.[id]?.id ?? id;
-  const leaveVisits = (ids) => {
-    seenAt = seenStore.update((seen) => noteLeft(seen, ids.map(seenKey), Date.now()), seenAt);
+  const leaveVisits = async (ids) => {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const entries2 = {};
+    for (const id of ids) entries2[seenKey(id)] = { seen: now };
+    try {
+      takeReads(await call("mark-read", { entries: entries2 }));
+    } catch (error) {
+      quietly("mark read")(error);
+    }
   };
   ctx.effect(() => {
-    const onPageHide = () => leaveVisits(Object.keys(ui2.getSnapshot().visits ?? {}));
+    const onPageHide = () => {
+      void leaveVisits(Object.keys(ui2.getSnapshot().visits ?? {}));
+    };
     window.addEventListener("pagehide", onPageHide);
     return () => window.removeEventListener("pagehide", onPageHide);
   }, "ds-bot: remember visits on page hide");
-  ctx.effect(() => {
-    const onStorage = (event) => {
-      if (event.storageArea !== localStorage) return;
-      if (event.key === null || event.key === unreadStore.key) ui2.set((state) => ({ ...state, unread: unreadStore.read(state.unread) }));
-      if (event.key === null || event.key === reactionStore.key) ui2.set((state) => ({ ...state, reactions: reactionStore.read(state.reactions) }));
-      if (event.key === null || event.key === seenStore.key) seenAt = seenStore.read(seenAt);
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, "ds-bot: follow other windows");
   const activity = createSource({});
   const work = createSource({ bots: {}, approvals: [] });
   let workKey = "";
@@ -14309,9 +14446,12 @@ function apply(ctx) {
   } catch {
     savedPrefs = {};
   }
-  const writeUnread = (id, value) => {
-    const unread = unreadStore.update((marks) => setUnread(marks, id, value), ui2.getSnapshot().unread);
-    ui2.set((state) => JSON.stringify(state.unread) === JSON.stringify(unread) ? state : { ...state, unread });
+  const writeUnread = async (id, value) => {
+    try {
+      takeReads(await call("mark-read", { id, unread: value }));
+    } catch (error) {
+      quietly("mark read")(error);
+    }
   };
   const refreshed = /* @__PURE__ */ new Set();
   let pulls = 0;
@@ -14339,7 +14479,10 @@ function apply(ctx) {
     if (value.capabilityStatuses !== void 0 && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live2.capabilityStatuses = value.capabilityStatuses;
     if (Object.keys(live2).length > 0 && current.ready) roster.set({ ...current, ...live2 });
     if (value.unchanged || value.revision === current.revision && value.modelsKey === current.modelsKey) return;
-    if (Object.keys(seenAt).length === 0) leaveVisits([...value.bots, ...value.rooms].map((entry) => entry.id));
+    const reads = isPlainObject(value.reads) ? value.reads : {};
+    if (Object.keys(reads).length === 0 && value.bots.length + value.rooms.length > 0) await leaveVisits([...value.bots, ...value.rooms].map((entry) => entry.id));
+    else takeReads(reads);
+    takeReactions(value.reactions);
     roster.set(indexRoster(value));
     try {
       const ids = (value.agents ?? []).flatMap((agent) => agent.sessions ?? []);
@@ -14355,6 +14498,22 @@ function apply(ctx) {
       if (refreshed.has(id)) continue;
       refreshed.add(id);
       void Promise.resolve(ctx.sessions.refreshProjections?.(id)).catch(quietly("refresh projections"));
+    }
+  };
+  const importLegacyMarks = async () => {
+    const unread = stored(STORAGE.unread);
+    const seen = stored(STORAGE.seen);
+    const reactions = stored(STORAGE.reactions);
+    if (unread === null && seen === null && reactions === null) return;
+    const entries2 = {};
+    for (const [id, flag] of Object.entries(unread ?? {})) if (flag === true) entries2[id] = { ...entries2[id], unread: true };
+    for (const [id, at] of Object.entries(seen ?? {})) if (Number.isFinite(Number(at))) entries2[id] = { ...entries2[id], seen: Number(at) };
+    const done = Object.keys(entries2).length === 0 || await call("mark-read", { entries: entries2 }).then(() => true, () => false);
+    const reacted = reactions === null || await call("react", { entries: reactions }).then(() => true, () => false);
+    try {
+      if (done) for (const key of [STORAGE.unread, STORAGE.seen]) localStorage.removeItem(key);
+      if (reacted) localStorage.removeItem(STORAGE.reactions);
+    } catch {
     }
   };
   ctx.effect(() => {
@@ -14378,7 +14537,9 @@ function apply(ctx) {
       if (!document.hidden) void loop();
     };
     document.addEventListener("visibilitychange", wake);
-    void loop();
+    void importLegacyMarks().catch(quietly("import read marks")).then(() => {
+      if (!stopped) void loop();
+    });
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -14674,7 +14835,7 @@ function apply(ctx) {
       ui2.set((state) => ({ ...state, visits: { ...state.visits, [id]: { seen, entered: Date.now() } } }));
     },
     endVisit: (id) => {
-      leaveVisits([id]);
+      void leaveVisits([id]);
       ui2.set((state) => {
         if (!(id in (state.visits ?? {}))) return state;
         const visits = { ...state.visits };
@@ -14682,9 +14843,12 @@ function apply(ctx) {
         return { ...state, visits };
       });
     },
-    toggleReaction: (key, index, emoji) => {
-      const reactions = reactionStore.update((saved) => toggleReaction(saved, key, index, emoji), ui2.getSnapshot().reactions);
-      ui2.set((state) => ({ ...state, reactions }));
+    toggleReaction: async (key, index, emoji) => {
+      try {
+        takeReactions(await call("react", { key, index, emoji }));
+      } catch (error) {
+        quietly("react")(error);
+      }
     },
     clearUnread: (id) => writeUnread(id, false),
     // DSH's right sidebar (files, terminals), which a plugin may load after this one.

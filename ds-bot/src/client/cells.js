@@ -224,6 +224,24 @@ export function stackReplies(replies) {
   return items
 }
 
+// Where a round's replies paused long enough for a separator, keyed by the reply it goes
+// above. The times are the host's, logged with each line of the group log, so two windows
+// put the same separators in the same places — and a member's slow turn shows as the pause
+// it was.
+export function replyClockMarks(items, replies, gap) {
+  const marks = new Map()
+  let previous
+  items.forEach((item, position) => {
+    const start = item.reply.time
+    if (Number.isFinite(start) && previous !== undefined && start - previous >= gap) marks.set(item.index, start)
+    // A block of one member's messages ends at the last of them, not at its first.
+    const next = items[position + 1]
+    const end = (next === undefined ? replies.at(-1) : replies[next.index - 1])?.time
+    previous = Number.isFinite(end) ? end : start
+  })
+  return marks
+}
+
 // A centered event line that names a group chat and opens it.
 function GroupEvent({ prefix, room, name, roster, actions }) {
   return h('div', { className: 'bt-event' },
@@ -334,6 +352,7 @@ export function ChatRows({ items, sessionId, roster, actions, useUi, clock = fal
     } else rows.push(item.kind === 'bot' ? { kind: 'bot', texts: [item.text], time: item.time, end: item.time } : item)
   }
   let before
+  const gap = timeGapMs(roster.prefs)
   return rows.flatMap((row, index) => {
     // Pages are prepended, so a row keeps its distance from the end.
     const key = rows.length - index
@@ -343,7 +362,7 @@ export function ChatRows({ items, sessionId, roster, actions, useUi, clock = fal
       before = undefined
       return [shown]
     }
-    const pause = clock && Number.isFinite(row.time) && (before === undefined || row.time - before >= SEPARATOR_GAP_MS)
+    const pause = clock && Number.isFinite(row.time) && (before === undefined || row.time - before >= gap)
     if (Number.isFinite(row.end ?? row.time)) before = row.end ?? row.time
     return pause ? [h('div', { key: `${key}:clock`, className: 'bt-time-sep', role: 'separator' }, clockLabel(row.time)), shown] : [shown]
   })
@@ -495,7 +514,10 @@ export function TurnProcessCell({ node, sessionId, turnProcess, useRoster, useUi
 export function Nothing() { return null }
 
 // The time separator: "Today 1:12 AM", "Yesterday 9:03 PM", "Thu, Sep 3 4:20 PM".
-const SEPARATOR_GAP_MS = 30 * 60 * 1000
+// A pause of at least this long between two entries gets a line of its own; the team
+// keeps the length (state.prefs.timeGapMinutes) and the host defaults to two minutes.
+export const DEFAULT_TIME_GAP_MINUTES = 2
+export const timeGapMs = prefs => (Number.isInteger(prefs?.timeGapMinutes) ? prefs.timeGapMinutes : DEFAULT_TIME_GAP_MINUTES) * 60_000
 export function clockLabel(time, now = Date.now()) {
   const date = new Date(time)
   const midnight = value => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime()
@@ -531,14 +553,15 @@ export const unseenSince = (visit, time) => typeof visit?.seen === 'number' && t
 // An entry in DSH's own turn tail, after what other plugins put there (the cards of
 // the files a turn delivered). The tail sits right before the next turn's first row,
 // so the separator for a pause between turns renders here.
-export function TurnTailCell({ turn: location, sessionId, useTurnClock, useUi, actions }) {
+export function TurnTailCell({ turn: location, sessionId, useTurnClock, useRoster, useUi, actions }) {
   const turn = location.turn
   // DSH builds the tail from the turn's end, so it is there.
   const time = location.end.time
   useEffect(() => { actions.noteTurnTime(sessionId, turn, 'end', time) }, [sessionId, turn, time])
+  const gap = timeGapMs(useRoster(value => value.prefs))
   const label = useTurnClock((state) => {
     const start = nextTurnStart(state[sessionId] ?? {}, turn)
-    return start !== undefined && start - time >= SEPARATOR_GAP_MS ? clockLabel(start) : ''
+    return start !== undefined && start - time >= gap ? clockLabel(start) : ''
   })
   // The unread divider sits before the first turn that began after the last visit;
   // turns that begin while the conversation is open were watched live.
@@ -675,8 +698,9 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
   const speakerDoing = useWork?.(work => (work.bots?.[live.speaking]?.tool ? workPhrase(work.bots[live.speaking]) : undefined)) ?? undefined
   if (replies.length === 0 && pending.length === 0) return null
   const room = roster.roomsById[sessionId]
-  return h('div', { className: 'bt-group-replies' },
-    stackReplies(replies).map(({ reply, index, texts }) => {
+  const rows = stackReplies(replies)
+  const marks = replyClockMarks(rows, replies, timeGapMs(roster.prefs))
+  const shown = rows.map(({ reply, index, texts }) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
       if (reply.kind === 'user') {
         return h('div', { key: `user-${index}`, className: 'bt-urow' }, h('div', { className: 'bt-ububble' },
@@ -711,7 +735,15 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
         return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event' }, t('{name} finished its work', { name: bot.name }))
       }
       return h(GroupMessage, { key: `${reply.botId}-${index}`, bot, texts, room, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined, useUi })
-    }),
+  })
+  // A separator sits where the round paused, by the time the host logged with each reply.
+  const children = []
+  shown.forEach((node, position) => {
+    const at = marks.get(rows[position].index)
+    if (at !== undefined) children.push(h('div', { key: `clock-${rows[position].index}`, className: 'bt-time-sep', role: 'separator' }, clockLabel(at)))
+    children.push(node)
+  })
+  return h('div', { className: 'bt-group-replies' }, children,
     pending.map((id) => {
       const bot = roster.byId[id]
       if (!bot) return null

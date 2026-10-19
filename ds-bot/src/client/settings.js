@@ -6,6 +6,7 @@ import { CloseIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, ConnectorIcon,
 import { AdminStar, BotAvatar, RoomAvatar } from './mark.js'
 import { useEscape } from './overlay-hooks.js'
 import { BotSettingsForm } from './bot-settings.js'
+import { DEFAULT_TIME_GAP_MINUTES } from './cells.js'
 import { Segmented, useGlide } from './motion.js'
 import { GroupSettingsForm, NewGroupForm } from './group-settings.js'
 import { CreateBot } from './create-bot.js'
@@ -48,6 +49,19 @@ function GeneralPage({ roster, actions, run }) {
     clearTimeout(timer.current)
     timer.current = setTimeout(() => run(actions.setPrefs({ accent: value })), 350)
   }
+  // The gap between time separators is one setting for every conversation and device,
+  // so it is saved when the field is done rather than on each keystroke.
+  const gap = Number.isInteger(prefs.timeGapMinutes) ? prefs.timeGapMinutes : DEFAULT_TIME_GAP_MINUTES
+  const [gapText, setGapText] = useState(String(gap))
+  useEffect(() => { setGapText(String(gap)) }, [gap])
+  const setGap = () => {
+    const minutes = Number(gapText)
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
+      setGapText(String(gap))
+      return
+    }
+    run(actions.setPrefs({ timeGapMinutes: minutes }))
+  }
   return [
     h(SetSection, { key: 'look', title: t('Appearance') },
       h(SetRow, { label: t('Theme'), hint: t('Colors for the whole team, on every device.') },
@@ -62,6 +76,16 @@ function GeneralPage({ roster, actions, run }) {
           })),
           h('label', { className: 'bt-swatch bt-swatch-custom', title: t('Custom accent'), 'data-on': Boolean(prefs.accent) && !ACCENT_INKS.some(ink => INKS[ink][0] === prefs.accent) },
             h('input', { type: 'color', value: custom, 'aria-label': t('Custom accent'), onChange: event => pickCustom(event.target.value) }))))),
+    h(SetSection, { key: 'chat', title: t('Chat') },
+      h(SetRow, { label: t('Time separators'), hint: t('A pause of at least this many minutes between messages shows the time.') },
+        h('div', { className: 'bt-set-inline' },
+          h('input', {
+            className: 'bt-input bt-input-number', type: 'number', min: 1, max: 60, step: 1, value: gapText,
+            'aria-label': t('Minutes between time separators'),
+            onChange: event => setGapText(event.target.value), onBlur: setGap,
+            onKeyDown: (event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); setGap() } },
+          }),
+          h('span', { className: 'bt-set-unit' }, t('minutes'))))),
     actions.setSurface ? h(SetSection, { key: 'mode', title: t('Mode') },
       h(SetRow, { label: t('Classic Agent mode') },
         h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => actions.setSurface('agent') }, t('Switch')))) : null,

@@ -11,31 +11,39 @@ import { useLinger } from './motion.js'
 const POLL_MS = 1500
 const MENU_EXIT_MS = 120
 
-// Entry counts per Bot, for the details pane; the dialog updates them as it loads.
+// A panel subject is `{ kind: 'bot' | 'room', id, name }`: a Bot's memory, which holds
+// its own and the team's, or a group chat's project memory, which only it reads.
+export const subjectOfBot = bot => ({ kind: 'bot', id: bot.id, name: bot.name })
+export const subjectOfRoom = room => ({ kind: 'room', id: room.id, name: room.name })
+const subjectKey = subject => (subject.kind === 'room' ? `room:${subject.id}` : subject.id)
+const payloadOf = subject => (subject.kind === 'room' ? { roomId: subject.id } : { botId: subject.id })
+
+// Entry counts per subject, for the details pane; the dialog updates them as it loads.
 const counts = new Map()
 const countListeners = new Set()
-function noteCount(botId, count) {
-  if (counts.get(botId) === count) return
-  counts.set(botId, count)
+function noteCount(key, count) {
+  if (counts.get(key) === count) return
+  counts.set(key, count)
   for (const listener of countListeners) listener()
 }
 
-export function useMemoryCount(botId, actions) {
-  const [count, setCount] = useState(counts.get(botId) ?? null)
+export function useMemoryCount(subject, actions) {
+  const key = subjectKey(subject)
+  const [count, setCount] = useState(counts.get(key) ?? null)
   useEffect(() => {
-    const listener = () => setCount(counts.get(botId) ?? null)
+    const listener = () => setCount(counts.get(key) ?? null)
     countListeners.add(listener)
     listener()
     let stop = false
-    actions.memoryView?.(botId).then((view) => { if (!stop) noteCount(botId, view.entries.length) }).catch(() => {})
+    actions.memoryView?.(payloadOf(subject)).then((view) => { if (!stop) noteCount(key, view.entries.length) }).catch(() => {})
     return () => { stop = true; countListeners.delete(listener) }
-  }, [botId])
+  }, [key])
   return count
 }
 
 // The details pane's row: how much the Bot keeps, and the way into the dialog.
 export function MemoryRow({ bot, actions }) {
-  const count = useMemoryCount(bot.id, actions)
+  const count = useMemoryCount(subjectOfBot(bot), actions)
   const label = count === null ? t('Loading…') : count === 0 ? t('Nothing saved yet') : count === 1 ? t('1 entry') : t('{count} entries', { count })
   return h('div', null,
     h('div', { className: 'bt-section-title' }, t('Memory')),
@@ -64,12 +72,16 @@ function Skeleton({ label }) {
     label ? h('div', { className: 'bt-mem-skel-label' }, label) : null)
 }
 
-function Summary({ bot, view, regenerate }) {
+function Summary({ subject, view, regenerate }) {
   if (view.entries.length === 0) {
     return h('div', { className: 'bt-mem-empty' },
       h('div', { className: 'bt-mem-empty-mark' }, h(MemoryIcon)),
-      h('div', { className: 'bt-mem-empty-title' }, t('{name} has not saved anything yet', { name: bot.name })),
-      h('div', { className: 'bt-mem-empty-text' }, t('Bots keep lasting preferences, decisions, and what you ask them to remember. Tell {name} below, or in its chat.', { name: bot.name })))
+      h('div', { className: 'bt-mem-empty-title' }, subject.kind === 'room'
+        ? t('Nothing saved for this group chat yet')
+        : t('{name} has not saved anything yet', { name: subject.name })),
+      h('div', { className: 'bt-mem-empty-text' }, subject.kind === 'room'
+        ? t('The members of this group chat keep what later work here needs, and read it while they speak here. Tell {name} below, or in the group chat.', { name: subject.name })
+        : t('Bots keep lasting preferences, decisions, and what you ask them to remember. Tell {name} below, or in its chat.', { name: subject.name })))
   }
   const failed = view.error && !view.summarizing
     ? h('div', { className: 'bt-mem-failed', role: 'alert' },
@@ -117,12 +129,15 @@ function EntryRow({ entry, remove }) {
     }, confirming ? t('Remove') : h(TrashIcon)))
 }
 
-function Entries({ bot, view, remove }) {
+function Entries({ subject, view, remove }) {
   const groups = groupEntries(view.entries)
-  const sections = [
-    { scope: 'own', title: t("{name}'s memory", { name: bot.name }), size: view.sizes.own },
-    { scope: 'team', title: t('Team memory'), hint: t('Every Bot reads it'), size: view.sizes.team },
-  ]
+  // A group chat has one memory, its project's; a Bot has its own and the team's.
+  const sections = subject.kind === 'room'
+    ? [{ scope: 'project', title: t('This group chat\'s project memory'), hint: t('Its members read it while they speak here'), size: view.sizes.team }]
+    : [
+        { scope: 'own', title: t("{name}'s memory", { name: subject.name }), size: view.sizes.own },
+        { scope: 'team', title: t('Team memory'), hint: t('Every Bot reads it'), size: view.sizes.team },
+      ]
   return h('div', { className: 'bt-mem-entries' },
     sections.map(section => h('section', { key: section.scope, className: 'bt-mem-section' },
       h('div', { className: 'bt-mem-section-head' },
@@ -141,6 +156,7 @@ function changeLine(change) {
   if (!change.ok) return t('Not changed: {text} ({reason})', { text, reason: hostText(change.error ?? '') })
   if (change.op === 'remove') return change.scope === 'team' ? t('Removed from team memory: {text}', { text }) : t('Removed: {text}', { text })
   if (change.op === 'edit') return t('Updated: {text}', { text })
+  if (change.scope === 'project') return t('Added to this group chat\'s project memory: {text}', { text })
   return change.scope === 'team' ? t('Added to team memory: {text}', { text }) : t('Added: {text}', { text })
 }
 
@@ -161,7 +177,8 @@ function Reply({ answer, dismiss }) {
 
 // The view as the host has it, loaded again while a summary is being written. Only the
 // latest request's answer counts.
-function useMemoryView(botId, actions) {
+function useMemoryView(subject, actions) {
+  const key = subjectKey(subject)
   const [view, setView] = useState(null)
   const [error, setError] = useState('')
   const timer = useRef(0)
@@ -170,25 +187,25 @@ function useMemoryView(botId, actions) {
   const show = useCallback((next) => {
     setView(next)
     setError('')
-    noteCount(botId, next.entries.length)
-  }, [botId])
+    noteCount(key, next.entries.length)
+  }, [key])
   const load = useCallback(async (flags = {}) => {
     clearTimeout(timer.current)
     const ticket = ++latest.current
     try {
-      const next = await actions.memoryView(botId, flags)
+      const next = await actions.memoryView({ ...payloadOf(subject), ...flags })
       if (!alive.current || ticket !== latest.current) return
       show(next)
       if (next.summarizing) timer.current = setTimeout(() => void load({ summarize: flags.summarize || flags.regenerate }), POLL_MS)
     } catch (failure) {
       if (alive.current && ticket === latest.current) setError(failure?.message ?? String(failure))
     }
-  }, [botId])
+  }, [key])
   useEffect(() => {
     alive.current = true
     void load({ summarize: true })
     return () => { alive.current = false; clearTimeout(timer.current) }
-  }, [botId])
+  }, [key])
   return { view, error, load, show }
 }
 
@@ -201,8 +218,8 @@ function useNow(every) {
   return now
 }
 
-export function MemoryDialog({ bot, actions, leaving = false }) {
-  const { view, error, load, show } = useMemoryView(bot.id, actions)
+export function MemoryDialog({ subject, actions, leaving = false }) {
+  const { view, error, load, show } = useMemoryView(subject, actions)
   const [page, setPage] = useState('summary')
   const [menu, setMenu] = useState(false)
   const [menuShown, menuLeaving] = useLinger(menu, MENU_EXIT_MS)
@@ -233,7 +250,7 @@ export function MemoryDialog({ bot, actions, leaving = false }) {
   const backToSummary = () => { setPage('summary'); void load({ summarize: true }) }
   const remove = async (entry) => {
     try {
-      show(await actions.memoryForget(bot.id, entry))
+      show(await actions.memoryForget({ ...payloadOf(subject), scope: entry.scope, topic: entry.topic, text: entry.text }))
       return true
     } catch (failure) {
       setAnswer({ asked: entry.text, error: failure?.message ?? String(failure) })
@@ -247,7 +264,7 @@ export function MemoryDialog({ bot, actions, leaving = false }) {
     setText('')
     setAnswer({ asked, pending: true })
     try {
-      const result = await actions.memoryAsk(bot.id, asked)
+      const result = await actions.memoryAsk({ ...payloadOf(subject), text: asked })
       setAnswer({ asked, reply: result.reply, changes: result.changes })
       show(result.view)
       if (result.changes.some(change => change.ok)) void load({ summarize: page === 'summary' })
@@ -265,13 +282,14 @@ export function MemoryDialog({ bot, actions, leaving = false }) {
         : view.summary && view.fresh ? (when ? t('Updated {time}', { time: when }) : t('Updated just now'))
           : ''
   const busy = answer?.pending === true
+  const where = subject.kind === 'room' ? t("This group chat's project memory") : t("{name}'s memory", { name: subject.name })
   return h('div', { className: 'bt-mem-layer', 'data-leaving': leaving || undefined },
     h('div', { className: 'bt-scrim bt-mem-scrim', onMouseDown: close }),
-    h('div', { className: 'bt-mem', role: 'dialog', 'aria-modal': true, 'aria-label': t("{name}'s memory", { name: bot.name }) },
+    h('div', { className: 'bt-mem', role: 'dialog', 'aria-modal': true, 'aria-label': where },
       h('div', { className: 'bt-mem-head' },
         page === 'entries' ? h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Back to the summary'), onClick: backToSummary }, h(ChevronLeftIcon)) : null,
         h('h2', null, page === 'entries' ? t('All entries') : t('Memory summary')),
-        h('span', { className: 'bt-mem-status' }, page === 'summary' ? [bot.name, status].filter(Boolean).join(' · ') : status),
+        h('span', { className: 'bt-mem-status' }, page === 'summary' ? [subject.name, status].filter(Boolean).join(' · ') : status),
         h('span', { className: 'bt-mem-head-gap' }),
         h('button', { ref: dotsRef, type: 'button', className: 'bt-icon-btn', 'aria-label': t('Memory options'), 'aria-haspopup': 'menu', 'aria-expanded': menu, onClick: () => setMenu(value => !value) }, h(DotsIcon)),
         h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Close memory'), onClick: close }, h(CloseIcon)),
@@ -283,14 +301,14 @@ export function MemoryDialog({ bot, actions, leaving = false }) {
       h('div', { className: 'bt-mem-body' },
         error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, hostText(error)) : null,
         view === null ? (error ? null : h(Skeleton))
-          : page === 'entries' ? h(Entries, { bot, view, remove })
-            : h(Summary, { bot, view, regenerate })),
+          : page === 'entries' ? h(Entries, { subject, view, remove })
+            : h(Summary, { subject, view, regenerate })),
       h('div', { className: 'bt-mem-foot' },
         answer ? h(Reply, { answer, dismiss: () => setAnswer(null) }) : null,
         h('form', { className: 'bt-mem-ask', onSubmit: ask },
           h('input', {
             ref: inputRef, className: 'bt-mem-input', value: text, maxLength: 2000, disabled: view === null,
-            placeholder: t('Ask or update'), 'aria-label': t("Ask about or update {name}'s memory", { name: bot.name }),
+            placeholder: t('Ask or update'), 'aria-label': subject.kind === 'room' ? t("Ask about or update this group chat's project memory") : t("Ask about or update {name}'s memory", { name: subject.name }),
             onChange: event => setText(event.target.value),
           }),
           h('button', { type: 'submit', className: 'bt-mem-send', disabled: busy || text.trim() === '', 'aria-label': t('Send') },

@@ -6,6 +6,7 @@ import { Card, Row, InlineText, SwitchRow } from './bot-settings.js'
 import { Segmented } from './motion.js'
 import { FolderMenu } from './folder-menu.js'
 import { PermissionPicker } from './permission-picker.js'
+import { useMemoryCount, subjectOfRoom } from './memory-panel.js'
 import { t } from './i18n.js'
 
 export const ROOM_MODES = [
@@ -33,6 +34,19 @@ function GroupPermission({ room, catalog, update }) {
     }),
     shared ? h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil' },
       h(PermissionPicker, { catalog, saved: room.permission, onPick: permission => update({ permission }) })) : null)
+}
+
+// A group chat keeps a project memory of its own: its members read and write it while
+// they speak here, and the team memory never enters the group.
+function RoomMemoryCard({ room, actions }) {
+  const count = useMemoryCount(subjectOfRoom(room), actions)
+  const label = count === null ? t('Loading…') : count === 0 ? t('Nothing saved yet') : count === 1 ? t('1 entry') : t('{count} entries', { count })
+  return h(Card, { title: t('Memory') },
+    h('button', { type: 'button', className: 'bt-set-row bt-bs-row', 'aria-label': t('Manage the project memory of {name}', { name: room.name }), onClick: () => actions.openMemory(room.id) },
+      h('span', { className: 'bt-set-copy' },
+        h('span', { className: 'bt-bs-label' }, t('Project memory · {count}', { count: label })),
+        h('span', { className: 'bt-set-hint' }, t('Its members read it while they speak here. The team memory is not read in this group.'))),
+      h('span', { className: 'bt-mem-row-go' }, t('Manage'), h(ChevronRightIcon))))
 }
 
 // A group chat's settings as grouped cards: its name and notice, who answers, its
@@ -81,6 +95,7 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),
         h(FolderMenu, { value: room.workDir, group: true, actions, run, onPick: workDir => update({ workDir }) }))),
     h(GroupPermission, { room, catalog: roster.permissions, update }),
+    roster.memory === false ? null : h(RoomMemoryCard, { room, actions }),
     h(Card, { title: t('Members · {count}', { count: members.length }) },
       members.map((member) => {
         const leads = room.admin === member.id
