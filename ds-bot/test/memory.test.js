@@ -233,13 +233,19 @@ test('topics hold details, linked from MEMORY.md, and go when their last entry d
   assert.equal(read('bots', 'b2', 'MEMORY.md'), '# Memory\n\n## Index\n')
 })
 
-test('Main Bots and group admins write the team memory; only Main Bots touch another Bot\'s', async (t) => {
-  const { tool, read, stop } = start()
+test('Main Bots write the team memory; a group chat keeps its own project memory; only Main Bots touch another Bot\'s', async (t) => {
+  const { tool, read, home, stop } = start()
   t.after(() => stop())
   assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'b2'), /^Only Main Bots and group admins write the team memory/)
-  // Coder is the admin of Launch, and speaks there from its group Session.
-  assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'g3'), /^Saved to the team memory/)
-  assert.match(read('team', 'MEMORY.md'), /- Ship on Friday \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Coder; added: /)
+  // Coder is the admin of Launch, and speaks there from its group Session: that group
+  // keeps a project memory of its own, and the team memory is not there to write.
+  assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'g3'), /^This group chat reads and writes its project memory, not the team memory\./)
+  assert.match(await tool('remember', { text: 'Ship on Friday' }, 'g3'), /^Saved to the project memory of "Launch", in MEMORY\.md/)
+  assert.match(read('rooms', 'r1', 'MEMORY.md'), /- Ship on Friday \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Coder; added: /)
+  assert.equal(existsSync(join(home, 'memory', 'team')), false)
+  // The same Bot writes the team memory from its own chat, where the team shares one.
+  assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'm1'), /^Saved to the team memory/)
+  assert.match(await tool('recall', { query: 'friday' }, 'g3'), /^Entries with "friday" in your memory and the project memory of "Launch":\n\[project · MEMORY\.md\] Ship on Friday/)
   assert.match(await tool('remember', { text: 'Writes in Chinese', scope: 'Writer' }, 'm1'), /^Saved to Writer's memory/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- Writes in Chinese \[source: part 1 #10; by: Chief; added: /)
   assert.match(await tool('remember', { text: 'Bossy', scope: 'Chief' }, 'b2'), /^Only a Main Bot can change another Bot's memory/)
@@ -277,7 +283,9 @@ test('a Session keeps the memory it began with, across restarts, until its snaps
   assert.match(opened, /## Your memory \(MEMORY\.md\)\n- Likes tea \[source: part 1 #10; added: [\d-]+\]\n\n## Team memory, shared by every Bot \(team\/MEMORY\.md\)\n\(nothing saved yet\)$/)
   assert.match(opened, /when the whole team should know something, tell a Main Bot with message_bot/)
   assert.match(first.section('m1'), /As a Main Bot you write it with remember scope "team"/)
-  assert.match(first.section('g3'), /As a group admin you write it/)
+  // A group Session carries the group's project rule instead, whoever administers it.
+  assert.match(first.section('g3'), /the memory below is its project memory/)
+  assert.doesNotMatch(first.section('g3'), /As a group admin you write it/)
   assert.equal(first.section('nobody'), '')
 
   await first.tool('remember', { text: 'Lives in Hangzhou', topic: 'home' }, 'b2')
@@ -315,10 +323,14 @@ test('a change of role freezes the section again, so its team rule matches the t
 
   assert.equal((await call('set-main', { id: 'b2', main: false })).ok, true)
   assert.match(section('b2'), /tell a Main Bot with message_bot/)
-  // Coder loses the admin seat of Launch, and with it the team rule in its group Session.
-  assert.match(section('g3'), /As a group admin you write it/)
+  // A group Session never carries the team rule: its memory is the group's project,
+  // so the admin seat of Launch changes nothing in what Coder reads there.
+  const group = section('g3')
+  assert.match(group, /its project memory/)
+  assert.doesNotMatch(group, /As a group admin you write it/)
   assert.equal((await call('update-room', { id: 'r1', admin: 'b2' })).ok, true)
-  assert.match(section('g3'), /tell a Main Bot with message_bot/)
+  assert.equal(section('g3'), group)
+  // Writer now administers Launch, so the team rule in its own chat says so.
   assert.match(section('b2'), /As a group admin you write it/)
 })
 
@@ -620,16 +632,20 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   assert.equal((await call('state', {})).value.memoryNews.b2.text, 'The user writes Rust')
 })
 
-test('in a group, each member reviews the log, and an admin may keep it for the team', async (t) => {
+test('in a group, each member reviews the log into the group\'s project memory', async (t) => {
   const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user wants everything under one page', team: true }] })]
-  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  const { ctx, call, read, requests, home, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'g3' }, status: 'idle' })
   await reviewed(call)
-  assert.match(requests[0].system, /\{"op": "add", "text": "…", "team": true\}/)
+  // The prompt offers no team entry here, and says where the entries go.
+  assert.doesNotMatch(requests[0].system, /"team": true/)
+  assert.match(requests[0].system, /Every entry goes to this group chat's project memory/)
   assert.match(requests[0].messages[0].content[0].text, /New in the group chat "Launch", oldest first:\nUser: Keep everything you send me under one page\nCoder: Will do\.\n\nWrite every new or changed entry in English\.$/)
-  assert.match(read('team', 'MEMORY.md'), /- The user wants everything under one page \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Coder; added: /)
+  // A team flag the model adds anyway is ignored: nobody in the group reads that memory.
+  assert.match(read('rooms', 'r1', 'MEMORY.md'), /- The user wants everything under one page \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Coder; added: /)
+  assert.equal(existsSync(join(home, 'memory', 'team')), false)
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'group:r1:b3': 3 })
   assert.equal((await call('state', {})).value.memoryNews.b3.op, 'add')
 })
@@ -866,19 +882,24 @@ for (const rejoins of [false, true]) {
   })
 }
 
-test('a group admin deleted while its review writes leaves the team memory alone', async (t) => {
-  const many = Array.from({ length: 8 }, (_, at) => ({ op: 'add', text: `The team likes thing ${at + 1}`, team: true }))
+test('a group deleted while its review writes keeps only what it got', async (t) => {
+  const many = Array.from({ length: 8 }, (_, at) => ({ op: 'add', text: `The group likes thing ${at + 1}` }))
   const { ctx, home, call, stop } = start({ replies: [JSON.stringify({ changes: many })], config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'g3' }, status: 'idle' })
-  const team = join(home, 'memory', 'team', 'MEMORY.md')
-  while (!existsSync(team)) await new Promise(resolve => setImmediate(resolve))
+  const project = join(home, 'memory', 'rooms', 'r1', 'MEMORY.md')
+  while (!existsSync(project)) await new Promise(resolve => setImmediate(resolve))
   // b3 is the group's admin, so it must leave the group before it can go.
   assert.equal((await call('delete-room', { id: 'r1' })).ok, true)
   assert.equal((await call('delete-bot', { id: 'b3' })).ok, true)
   await reviewed(call)
-  assert.ok(parseMemory(readFileSync(team, 'utf8')).entries.length < 8)
+  // The group's project memory went to the archive whole, with what the review had
+  // written by then and nothing after it.
+  assert.equal(existsSync(join(home, 'memory', 'rooms', 'r1')), false)
+  const [archived] = readdirSync(join(home, 'memory', 'archive', 'rooms'))
+  const kept = parseMemory(readFileSync(join(home, 'memory', 'archive', 'rooms', archived, 'MEMORY.md'), 'utf8')).entries.length
+  assert.ok(kept >= 1 && kept < 8, `the archive kept ${kept} of 8`)
 })
 
 test('a member removed from the group while its turn runs is still reviewed', async (t) => {
@@ -893,7 +914,7 @@ test('a member removed from the group while its turn runs is still reviewed', as
   await reviewed(call)
   assert.equal(requests.length, 1)
   assert.match(requests[0].messages[0].content[0].text, /^The Bot: Writer[\s\S]*\nUser: Keep everything you send me under one page\n/)
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants one page \[source: group "Launch"/)
+  assert.match(read('rooms', 'r1', 'MEMORY.md'), /- The user wants one page \[source: group "Launch"/)
 })
 
 test('a Bot deleted while its review writes keeps no more of it, and its folder stays gone', async (t) => {
@@ -937,9 +958,15 @@ for (const [how, act] of [
     const done = await act(call)
     assert.equal(done.ok, true, JSON.stringify(done.error))
     await reviewed(call)
+    if (how === 'the group is deleted') {
+      // Its project memory went to the archive whole; there is nowhere to save to.
+      assert.equal(requests.length, 0)
+      assert.equal(existsSync(join(home, 'memory', 'rooms', 'r1')), false)
+      return
+    }
     assert.equal(requests.length, 1)
     assert.match(requests[0].messages[0].content[0].text, /^The Bot: Writer[\s\S]*\nUser: Keep everything you send me under one page\n/)
-    assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants one page \[source: group "Launch"/)
+    assert.match(read('rooms', 'r1', 'MEMORY.md'), /- The user wants one page \[source: group "Launch"/)
   })
 }
 
@@ -1077,7 +1104,7 @@ test('a memory review of a group names the member Bot chat', async (t) => {
   await reviewed(call)
   assert.equal(requests.length, 1)
   assert.equal(requests[0].sessionId, 'b3')
-  assert.match(read('team', 'MEMORY.md'), /Keep replies under one page/)
+  assert.match(read('rooms', 'r1', 'MEMORY.md'), /Keep replies under one page/)
 })
 
 test('a memory call names the current part of the Bot chat', async (t) => {

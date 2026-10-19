@@ -90,16 +90,25 @@ test('the turn tail entry notes when the turn ended and shows the pause before t
   effects.length = 0
   const noted = []
   const clock = { b: { 3: { first: 1_000, end: 2_000 }, 4: { first: 2_000 + 60 * 60 * 1000 } } }
-  const out = TurnTailCell({
+  // The pause the team asks for is the roster's setting, not this cell's own.
+  const render = prefs => TurnTailCell({
     turn: finished,
     sessionId: 'b',
     useTurnClock: select => select(clock),
+    useRoster: select => select({ prefs }),
     useUi: () => undefined,
     actions: { noteTurnTime: (...args) => noted.push(args) },
   })
+  const separators = node => find(node, item => item.props?.className === 'bt-time-sep').length
+  const out = render(undefined)
   for (const run of effects) run()
   assert.deepEqual(noted, [['b', 3, 'end', 2_000]])
-  assert.equal(find(out, node => node.props?.className === 'bt-time-sep').length, 1)
+  assert.equal(separators(out), 1)
+  // Five minutes is a pause at the default two, and stops being one at ten.
+  clock.b[4].first = 2_000 + 5 * 60 * 1000
+  assert.equal(separators(render(undefined)), 1)
+  assert.equal(separators(render({ timeGapMinutes: 10 })), 0)
+  assert.equal(separators(render({ timeGapMinutes: 2 })), 1)
 })
 
 // #206: the user reads a Bot's reply in its own chat, so it folds only where rendering

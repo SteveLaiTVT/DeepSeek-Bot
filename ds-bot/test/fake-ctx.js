@@ -85,5 +85,8 @@ export function fakeContext({ services = {} } = {}) {
     },
     llm: { listProviders: () => [] },
   }
+  // `llm` is a property of the context itself, not only a `get` entry, so a stand-in
+  // passed in must stand in there too.
+  if (services.llm !== undefined) ctx.llm = services.llm
   return ctx
 }
